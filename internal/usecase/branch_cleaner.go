@@ -43,6 +43,25 @@ type jiraStatusPrefetcher interface {
 	PrefetchStatuses(requests []jira.StatusBatchRequest)
 }
 
+type jiraStatusPrefetcherWithProgress interface {
+	PrefetchStatusesWithProgress(requests []jira.StatusBatchRequest) []jira.PrefetchBatchProgress
+}
+
+type RepoLoadProgress struct {
+	BatchIndex int
+	BatchTotal int
+	BatchSize  int
+	Processed  int
+	Total      int
+}
+
+type RepoLoadSummary struct {
+	JiraBatchProgress    []RepoLoadProgress
+	JiraProgressStreamed bool
+}
+
+type RepoLoadProgressCallback func(RepoLoadProgress)
+
 type CleanerOption func(*Cleaner)
 
 // NewCleaner собирает основной use case очистки веток.
@@ -94,24 +113,37 @@ func WithLogger(logger *zap.Logger) CleanerOption {
 
 // LoadRepoBranches загружает ветки и помечает их по правилам доступности к удалению.
 func (c *Cleaner) LoadRepoBranches(ctx context.Context, repo config.RepoConfig) (model.RepoBranches, error) {
+	rb, _, err := c.loadRepoBranchesDetailed(ctx, repo, nil)
+	return rb, err
+}
+
+func (c *Cleaner) LoadRepoBranchesWithSummary(ctx context.Context, repo config.RepoConfig) (model.RepoBranches, RepoLoadSummary, error) {
+	return c.loadRepoBranchesDetailed(ctx, repo, nil)
+}
+
+func (c *Cleaner) LoadRepoBranchesWithProgress(ctx context.Context, repo config.RepoConfig, onProgress RepoLoadProgressCallback) (model.RepoBranches, RepoLoadSummary, error) {
+	return c.loadRepoBranchesDetailed(ctx, repo, onProgress)
+}
+
+func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.RepoConfig, onProgress RepoLoadProgressCallback) (model.RepoBranches, RepoLoadSummary, error) {
 	managedPath, syncWarning, err := c.resolveRepoForRead(ctx, repo)
 	if err != nil {
-		return model.RepoBranches{}, err
+		return model.RepoBranches{}, RepoLoadSummary{}, err
 	}
 
 	allBranches, err := c.git.ListBranches(ctx, managedPath)
 	if err != nil {
-		return model.RepoBranches{}, err
+		return model.RepoBranches{}, RepoLoadSummary{}, err
 	}
 
 	currentBranch, err := c.git.CurrentBranch(ctx, managedPath)
 	if err != nil {
-		return model.RepoBranches{}, err
+		return model.RepoBranches{}, RepoLoadSummary{}, err
 	}
 
 	defaultBranch, err := c.git.DetectDefaultBranch(ctx, managedPath, currentBranch)
 	if err != nil {
-		return model.RepoBranches{}, err
+		return model.RepoBranches{}, RepoLoadSummary{}, err
 	}
 
 	dirtyStats, err := c.git.GetDirtyStats(ctx, managedPath)
@@ -121,8 +153,29 @@ func (c *Cleaner) LoadRepoBranches(ctx context.Context, repo config.RepoConfig) 
 
 	filtered := make([]model.BranchInfo, 0, len(allBranches))
 	mappingStats := newJiraMappingStats()
-	if prefetcher, ok := c.jira.(jiraStatusPrefetcher); ok {
-		prefetcher.PrefetchStatuses(collectJiraStatusRequests(repo, allBranches))
+	requests := collectJiraStatusRequests(repo, allBranches)
+	loadSummary := RepoLoadSummary{}
+	if prefetcher, ok := c.jira.(jiraStatusPrefetcherWithProgress); ok {
+		batchProgress := prefetcher.PrefetchStatusesWithProgress(requests)
+		if len(batchProgress) > 0 {
+			loadSummary.JiraProgressStreamed = onProgress != nil
+			loadSummary.JiraBatchProgress = make([]RepoLoadProgress, 0, len(batchProgress))
+			for _, item := range batchProgress {
+				progressItem := RepoLoadProgress{
+					BatchIndex: item.BatchIndex,
+					BatchTotal: item.BatchTotal,
+					BatchSize:  item.BatchSize,
+					Processed:  item.Processed,
+					Total:      item.Total,
+				}
+				if onProgress != nil {
+					onProgress(progressItem)
+				}
+				loadSummary.JiraBatchProgress = append(loadSummary.JiraBatchProgress, progressItem)
+			}
+		}
+	} else if prefetcher, ok := c.jira.(jiraStatusPrefetcher); ok {
+		prefetcher.PrefetchStatuses(requests)
 	}
 
 	for _, branch := range allBranches {
@@ -189,7 +242,7 @@ func (c *Cleaner) LoadRepoBranches(ctx context.Context, repo config.RepoConfig) 
 		CurrentBranch: currentBranch,
 		DirtyStats:    dirtyStats,
 		Branches:      filtered,
-	}, nil
+	}, loadSummary, nil
 }
 
 func collectJiraStatusRequests(repo config.RepoConfig, branches []model.BranchInfo) []jira.StatusBatchRequest {

@@ -29,6 +29,15 @@ type StatusBatchRequest struct {
 	Key         string
 }
 
+// PrefetchBatchProgress описывает прогресс пакетной проверки Jira-статусов.
+type PrefetchBatchProgress struct {
+	BatchIndex int
+	BatchTotal int
+	BatchSize  int
+	Processed  int
+	Total      int
+}
+
 type cacheEntry struct {
 	result    StatusResult
 	expiresAt time.Time
@@ -200,8 +209,12 @@ type browserSearchResponse struct {
 }
 
 func (s *StatusService) PrefetchStatuses(requests []StatusBatchRequest) {
+	_ = s.PrefetchStatusesWithProgress(requests)
+}
+
+func (s *StatusService) PrefetchStatusesWithProgress(requests []StatusBatchRequest) []PrefetchBatchProgress {
 	if s == nil || len(requests) == 0 {
-		return
+		return nil
 	}
 
 	s.fetchMu.Lock()
@@ -238,12 +251,40 @@ func (s *StatusService) PrefetchStatuses(requests []StatusBatchRequest) {
 		buckets[bucketKey] = append(buckets[bucketKey], prepared)
 	}
 
+	batchTotal := 0
+	total := 0
+	for _, bucketRequests := range buckets {
+		total += len(bucketRequests)
+		batchTotal += (len(bucketRequests) + jiraSearchBatchSize - 1) / jiraSearchBatchSize
+	}
+
+	if total == 0 || batchTotal == 0 {
+		return nil
+	}
+
+	progress := make([]PrefetchBatchProgress, 0, batchTotal)
+	processed := 0
+	batchIndex := 0
+
 	for _, bucketRequests := range buckets {
 		for start := 0; start < len(bucketRequests); start += jiraSearchBatchSize {
 			end := min(start+jiraSearchBatchSize, len(bucketRequests))
-			s.fetchAndStoreBatch(bucketRequests[start:end])
+			batch := bucketRequests[start:end]
+			s.fetchAndStoreBatch(batch)
+
+			batchIndex++
+			processed += len(batch)
+			progress = append(progress, PrefetchBatchProgress{
+				BatchIndex: batchIndex,
+				BatchTotal: batchTotal,
+				BatchSize:  len(batch),
+				Processed:  processed,
+				Total:      total,
+			})
 		}
 	}
+
+	return progress
 }
 
 type preparedStatusRequest struct {

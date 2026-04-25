@@ -29,8 +29,9 @@ type fakeGitClient struct {
 }
 
 type fakeStatusResolver struct {
-	resolveFn  func(group, ticketURL, jiraBaseURL, key string) jira.StatusResult
-	prefetchFn func(requests []jira.StatusBatchRequest)
+	resolveFn          func(group, ticketURL, jiraBaseURL, key string) jira.StatusResult
+	prefetchFn         func(requests []jira.StatusBatchRequest)
+	prefetchProgressFn func(requests []jira.StatusBatchRequest) []jira.PrefetchBatchProgress
 }
 
 func (f fakeStatusResolver) ResolveStatus(group, ticketURL, jiraBaseURL, key string) jira.StatusResult {
@@ -45,6 +46,18 @@ func (f fakeStatusResolver) PrefetchStatuses(requests []jira.StatusBatchRequest)
 	if f.prefetchFn != nil {
 		f.prefetchFn(requests)
 	}
+}
+
+func (f fakeStatusResolver) PrefetchStatusesWithProgress(requests []jira.StatusBatchRequest) []jira.PrefetchBatchProgress {
+	if f.prefetchProgressFn != nil {
+		return f.prefetchProgressFn(requests)
+	}
+
+	if f.prefetchFn != nil {
+		f.prefetchFn(requests)
+	}
+
+	return nil
 }
 
 func (f *fakeGitClient) ResolveRepoPath(ctx context.Context, repoName, repoURL, localPath string) (string, error) {
@@ -802,6 +815,77 @@ func TestLoadRepoBranchesPrefetchesJiraStatusesBeforeResolve(t *testing.T) {
 	}
 	if len(prefetched) != 2 {
 		t.Fatalf("expected two mapped jira requests in prefetch, got %d", len(prefetched))
+	}
+}
+
+func TestLoadRepoBranchesWithSummaryReturnsBatchProgress(t *testing.T) {
+	t.Parallel()
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/demo", nil
+		},
+		listBranchesFn: func(_ context.Context, repoPath string) ([]model.BranchInfo, error) {
+			return []model.BranchInfo{{
+				Name:          "OPS-101",
+				QualifiedName: "OPS-101",
+				Scope:         model.BranchScopeLocal,
+			}}, nil
+		},
+		currentBranchFn: func(_ context.Context, repoPath string) (string, error) {
+			return "main", nil
+		},
+		detectDefaultBranchFn: func(_ context.Context, repoPath, currentBranch string) (string, error) {
+			return "main", nil
+		},
+	}
+
+	v := viper.New()
+	v.Set("jira", []map[string]any{{
+		"group": "TASKS",
+		"url":   "https://tasks.example.org",
+	}})
+	v.Set("repos", []map[string]any{{
+		"name": "demo",
+		"path": "/tmp/demo",
+		"branch": map[string]any{
+			"jira": []string{`^(?P<TASKS>OPS-\d+)$`},
+		},
+	}})
+
+	cfg, err := config.LoadFromViper(v)
+	if err != nil {
+		t.Fatalf("load config from viper: %v", err)
+	}
+
+	cleaner := NewCleaner(git, WithJiraStatusResolver(fakeStatusResolver{
+		prefetchProgressFn: func(requests []jira.StatusBatchRequest) []jira.PrefetchBatchProgress {
+			if len(requests) != 1 {
+				t.Fatalf("expected one prefetch request, got %d", len(requests))
+			}
+			return []jira.PrefetchBatchProgress{{
+				BatchIndex: 1,
+				BatchTotal: 1,
+				BatchSize:  1,
+				Processed:  1,
+				Total:      1,
+			}}
+		},
+		resolveFn: func(group, ticketURL, jiraBaseURL, key string) jira.StatusResult {
+			return jira.StatusResult{Status: "Done", State: jira.StatusStateReady, Reason: jira.StatusReasonNone}
+		},
+	}))
+
+	_, summary, err := cleaner.LoadRepoBranchesWithSummary(context.Background(), cfg.Repos[0])
+	if err != nil {
+		t.Fatalf("load repo branches with summary: %v", err)
+	}
+
+	if len(summary.JiraBatchProgress) != 1 {
+		t.Fatalf("expected one jira progress item, got %d", len(summary.JiraBatchProgress))
+	}
+	if summary.JiraBatchProgress[0].Processed != 1 || summary.JiraBatchProgress[0].Total != 1 {
+		t.Fatalf("unexpected progress payload: %+v", summary.JiraBatchProgress[0])
 	}
 }
 

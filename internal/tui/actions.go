@@ -36,6 +36,8 @@ func (m *Model) startLoadRepo(repo config.RepoConfig, manual, startup bool) tea.
 	m.err = nil
 
 	if startup {
+		m.setStartupStage(repo.Name, "загрузка веток")
+		m.markStartupActivity()
 		m.setStartupProgressStatus()
 	} else if manual {
 		m.statusLine = fmt.Sprintf("Обновление %q...", repo.Name)

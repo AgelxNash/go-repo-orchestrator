@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/usecase"
 
@@ -9,19 +10,30 @@ import (
 )
 
 type branchesLoadedMsg struct {
-	requestID    int
-	actionKey    string
-	actionID     int
-	repoName     string
-	rb           model.RepoBranches
-	err          error
-	startup      bool
-	jiraResolved int
-	syncNote     string
+	requestID            int
+	actionKey            string
+	actionID             int
+	repoName             string
+	rb                   model.RepoBranches
+	err                  error
+	startup              bool
+	jiraResolved         int
+	jiraBatchProgress    []usecase.RepoLoadProgress
+	jiraProgressStreamed bool
+	syncNote             string
 }
 
 // startupLogMsg позволяет фоновым задачам отправлять записи в лог загрузки TUI.
 type startupLogMsg struct{ text string }
+
+type startupTimerTickMsg struct{ at time.Time }
+
+type repoLoadJiraProgressMsg struct {
+	repoName string
+	startup  bool
+	progress usecase.RepoLoadProgress
+	stream   <-chan usecase.RepoLoadProgress
+}
 
 type playwrightStartupCompletedMsg struct{ err error }
 
