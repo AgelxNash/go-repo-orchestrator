@@ -815,6 +815,36 @@ func TestStartupCountsLastRepoOnFinalRepoStatTask(t *testing.T) {
 	}
 }
 
+func TestStartupRepoStatLoadedSetsResultStageForNonFinalTask(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-selected", Path: "/tmp/repo-selected"},
+			{Name: "repo-stat", Path: "/tmp/repo-stat"},
+		},
+	}, nil, false)
+
+	m.repoIdx = 0
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(repoStatLoadedMsg{
+		repoName: "repo-stat",
+		startup:  true,
+		stat:     model.RepoStat{Loaded: true},
+	})
+	next = updated.(Model)
+
+	if !next.startupLoading {
+		t.Fatal("expected startupLoading=true for non-final startup task")
+	}
+	if next.startupCurrentRepo != "repo-stat" {
+		t.Fatalf("expected startupCurrentRepo=repo-stat, got %q", next.startupCurrentRepo)
+	}
+	if next.startupCurrentStage != "получение результата статуса Git" {
+		t.Fatalf("expected startupCurrentStage to be repoStat result label, got %q", next.startupCurrentStage)
+	}
+}
+
 func TestStartupViewShowsRepoAndStageWithoutAbstractHints(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},

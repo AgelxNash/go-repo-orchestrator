@@ -418,12 +418,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishRefreshPendingIfNeeded(msg.repoName)
 		startupInProgress := m.startupLoading
 		if msg.startup && startupInProgress {
+			m.setStartupStage(msg.repoName, "получение результата статуса Git")
+		}
+		if msg.startup && startupInProgress {
 			m.markStartupRepoDone(msg.repoName)
 		}
 		m.finishStartupTaskIfNeeded(msg.startup)
-		if msg.startup && m.startupLoading {
-			m.setStartupStage(msg.repoName, "получение статуса Git")
-		}
 		stat := msg.stat
 		stat.Loaded = true
 		if strings.TrimSpace(stat.SyncWarning) != "" {
