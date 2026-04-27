@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -59,13 +58,7 @@ func loadRepoBranchesCmd(ctx context.Context, cleaner *usecase.Cleaner, repo con
 	}
 
 	stageGit := func() tea.Msg {
-		return startupLogMsg{fmt.Sprintf("[СТАРТ] %s: начинаю синхронизацию", repo.Name)}
-	}
-	stageGitFetch := func() tea.Msg {
-		return startupLogMsg{fmt.Sprintf("[GIT] %s: получаю ветки", repo.Name)}
-	}
-	stageJira := func() tea.Msg {
-		return startupLogMsg{fmt.Sprintf("[JIRA] %s: проверяю статусы", repo.Name)}
+		return startupLogMsg{"[СТАРТ] " + repo.Name + ": начинаю синхронизацию"}
 	}
 	loadAndReport := func() tea.Msg {
 		rb, summary, err := cleaner.LoadRepoBranchesWithProgress(ctx, repo, func(item usecase.RepoLoadProgress) {
@@ -102,7 +95,7 @@ func loadRepoBranchesCmd(ctx context.Context, cleaner *usecase.Cleaner, repo con
 			syncNote:             syncNote,
 		}
 	}
-	return tea.Batch(stageGit, stageGitFetch, stageJira, progressCmd, loadAndReport)
+	return tea.Batch(stageGit, progressCmd, loadAndReport)
 }
 
 func loadRepoStatCmd(ctx context.Context, cleaner *usecase.Cleaner, repo config.RepoConfig, startup bool, actionKey string, actionID int) tea.Cmd {

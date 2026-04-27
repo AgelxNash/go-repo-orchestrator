@@ -249,7 +249,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case startupLogMsg:
 		m.pushLog(msg.text)
-		m.markStartupActivity()
 		m.updateStartupCurrentOpFromLog(msg.text)
 		return m, nil
 
@@ -261,7 +260,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, startupTimerTickCmd()
 
 	case repoLoadJiraProgressMsg:
-		m.markStartupActivity()
 		if msg.startup && m.startupLoading {
 			m.setStartupStage(msg.repoName, "проверка Jira")
 		}
@@ -275,7 +273,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playwrightStartupCompletedMsg:
 		m.finishStartupTaskIfNeeded(true)
-		m.markStartupActivity()
 		if msg.err != nil {
 			warn := "Предупреждение: браузер Playwright не запущен: " + msg.err.Error()
 			m.SetStartupWarning(warn)
@@ -308,7 +305,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if expectedReqID := m.repoLoadReq[msg.repoName]; expectedReqID != msg.requestID {
 			return m, nil
 		}
-		m.markStartupActivity()
 		if msg.startup && m.startupLoading {
 			m.setStartupStage(msg.repoName, "получение результата загрузки веток")
 		}
@@ -317,10 +313,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishRefreshIfMatched(msg.repoName, msg.requestID)
 		m.finishRefreshPendingIfNeeded(msg.repoName)
 		m.finishStartupURLTaskIfNeeded(msg.repoName, msg.startup)
-		m.finishStartupTaskIfNeeded(msg.startup)
 		if msg.startup && startupInProgress {
 			m.markStartupRepoDone(msg.repoName)
 		}
+		m.finishStartupTaskIfNeeded(msg.startup)
 		if msg.startup && startupInProgress && m.startupLoading {
 			m.setStartupProgressStatus()
 		}
@@ -421,11 +417,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishAction(msg.actionKey, msg.actionID)
 		m.finishRefreshPendingIfNeeded(msg.repoName)
 		startupInProgress := m.startupLoading
-		m.finishStartupTaskIfNeeded(msg.startup)
 		if msg.startup && startupInProgress {
 			m.markStartupRepoDone(msg.repoName)
 		}
-		m.markStartupActivity()
+		m.finishStartupTaskIfNeeded(msg.startup)
 		if msg.startup && m.startupLoading {
 			m.setStartupStage(msg.repoName, "получение статуса Git")
 		}

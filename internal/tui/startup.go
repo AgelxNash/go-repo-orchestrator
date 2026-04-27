@@ -138,7 +138,6 @@ func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 	if !startup || !m.startupLoading {
 		return
 	}
-	m.markStartupActivity()
 	if m.startupPending > 0 {
 		m.startupPending--
 	}
@@ -186,9 +185,6 @@ func (m *Model) setStartupProgressStatus() {
 }
 
 func (m *Model) markStartupRepoDone(repoName string) {
-	if !m.startupLoading {
-		return
-	}
 	repoName = strings.TrimSpace(repoName)
 	if repoName == "" {
 		return
@@ -264,23 +260,19 @@ func (m *Model) pushLog(msg string) {
 		m.eventLog = m.eventLog[len(m.eventLog)-maxEventLog:]
 	}
 }
-
-func (m *Model) markStartupActivity() {
-	if !m.startupLoading {
-		return
-	}
-}
-
 func (m *Model) setStartupStage(repoName, stage string) {
 	if !m.startupLoading {
 		return
 	}
 	stage = strings.TrimSpace(stage)
 	repoName = strings.TrimSpace(repoName)
+	stageChanged := m.startupCurrentRepo != repoName || m.startupCurrentStage != stage
 	m.startupCurrentRepo = repoName
 	m.startupCurrentStage = stage
-	m.startupStageStartedAt = time.Now()
-	m.startupStageElapsed = 0
+	if stageChanged {
+		m.startupStageStartedAt = time.Now()
+		m.startupStageElapsed = 0
+	}
 	if repoName != "" && stage != "" {
 		m.startupCurrentOp = fmt.Sprintf("%s: %s", repoName, stage)
 		return

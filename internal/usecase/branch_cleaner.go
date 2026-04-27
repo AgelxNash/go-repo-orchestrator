@@ -44,9 +44,10 @@ type jiraStatusPrefetcher interface {
 }
 
 type jiraStatusPrefetcherWithProgress interface {
-	PrefetchStatusesWithProgress(requests []jira.StatusBatchRequest) []jira.PrefetchBatchProgress
+	PrefetchStatusesWithProgress(requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress
 }
 
+// RepoLoadProgress описывает прогресс пакетной загрузки Jira-статусов для репозитория.
 type RepoLoadProgress struct {
 	BatchIndex int
 	BatchTotal int
@@ -55,11 +56,13 @@ type RepoLoadProgress struct {
 	Total      int
 }
 
+// RepoLoadSummary содержит агрегированную информацию о загрузке статусов Jira.
 type RepoLoadSummary struct {
 	JiraBatchProgress    []RepoLoadProgress
 	JiraProgressStreamed bool
 }
 
+// RepoLoadProgressCallback вызывается при поступлении промежуточного прогресса загрузки.
 type RepoLoadProgressCallback func(RepoLoadProgress)
 
 type CleanerOption func(*Cleaner)
@@ -156,7 +159,18 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 	requests := collectJiraStatusRequests(repo, allBranches)
 	loadSummary := RepoLoadSummary{}
 	if prefetcher, ok := c.jira.(jiraStatusPrefetcherWithProgress); ok {
-		batchProgress := prefetcher.PrefetchStatusesWithProgress(requests)
+		batchProgress := prefetcher.PrefetchStatusesWithProgress(requests, func(item jira.PrefetchBatchProgress) {
+			if onProgress == nil {
+				return
+			}
+			onProgress(RepoLoadProgress{
+				BatchIndex: item.BatchIndex,
+				BatchTotal: item.BatchTotal,
+				BatchSize:  item.BatchSize,
+				Processed:  item.Processed,
+				Total:      item.Total,
+			})
+		})
 		if len(batchProgress) > 0 {
 			loadSummary.JiraProgressStreamed = onProgress != nil
 			loadSummary.JiraBatchProgress = make([]RepoLoadProgress, 0, len(batchProgress))
@@ -167,9 +181,6 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 					BatchSize:  item.BatchSize,
 					Processed:  item.Processed,
 					Total:      item.Total,
-				}
-				if onProgress != nil {
-					onProgress(progressItem)
 				}
 				loadSummary.JiraBatchProgress = append(loadSummary.JiraBatchProgress, progressItem)
 			}

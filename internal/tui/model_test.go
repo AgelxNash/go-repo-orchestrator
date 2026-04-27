@@ -750,6 +750,71 @@ func TestStartupTracksOverallProgressAcrossAllTasks(t *testing.T) {
 	}
 }
 
+func TestStartupCountsLastRepoOnFinalBranchesLoadedTask(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a"},
+	})
+	next = updated.(Model)
+
+	if next.startupRepoTotal != 1 {
+		t.Fatalf("expected startupRepoTotal=1, got %d", next.startupRepoTotal)
+	}
+	if next.startupRepoDone != 1 {
+		t.Fatalf("expected startupRepoDone=1 after final task, got %d", next.startupRepoDone)
+	}
+	if next.startupLoading {
+		t.Fatal("expected startupLoading=false after final startup task")
+	}
+}
+
+func TestStartupCountsLastRepoOnFinalRepoStatTask(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-selected", Path: "/tmp/repo-selected"},
+			{Name: "repo-stat", Path: "/tmp/repo-stat"},
+		},
+	}, nil, false)
+
+	m.repoIdx = 0
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-selected"],
+		repoName:  "repo-selected",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-selected"},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(repoStatLoadedMsg{
+		repoName: "repo-stat",
+		startup:  true,
+		stat:     model.RepoStat{Loaded: true},
+	})
+	next = updated.(Model)
+
+	if next.startupRepoTotal != 2 {
+		t.Fatalf("expected startupRepoTotal=2, got %d", next.startupRepoTotal)
+	}
+	if next.startupRepoDone != 2 {
+		t.Fatalf("expected startupRepoDone=2 after final task, got %d", next.startupRepoDone)
+	}
+	if next.startupLoading {
+		t.Fatal("expected startupLoading=false after final startup task")
+	}
+}
+
 func TestStartupViewShowsRepoAndStageWithoutAbstractHints(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
@@ -804,6 +869,30 @@ func TestStartupViewShowsElapsedAndStageElapsed(t *testing.T) {
 	}
 	if !strings.Contains(view, "(14с)") {
 		t.Fatalf("expected stage elapsed timer in view, got %q", view)
+	}
+}
+
+func TestStartupStageTimerDoesNotResetOnSameProgressLog(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	next.setStartupStage("repo-a", "проверка Jira")
+	startedAt := time.Now().Add(-9 * time.Second)
+	next.startupStageStartedAt = startedAt
+	next.startupStageElapsed = 9 * time.Second
+
+	updated, _ = next.Update(startupLogMsg{text: "[JIRA] repo-a: проверка Jira"})
+	next = updated.(Model)
+
+	if !next.startupStageStartedAt.Equal(startedAt) {
+		t.Fatalf("expected stage start time to stay unchanged, got %v want %v", next.startupStageStartedAt, startedAt)
+	}
+	if next.startupStageElapsed != 9*time.Second {
+		t.Fatalf("expected stage elapsed to stay 9s, got %s", next.startupStageElapsed)
 	}
 }
 
@@ -919,6 +1008,29 @@ func TestStartupEventLogIncludesJiraBatchProgress(t *testing.T) {
 	}
 	if !strings.Contains(log, "[JIRA] repo-a: обработано 3/3 веток") {
 		t.Fatalf("expected cumulative branch progress in startup log, got %q", log)
+	}
+}
+
+func TestStartupEventLogDoesNotContainSyntheticGitAndJiraStagesBeforeRealEvents(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(startupLogMsg{text: "[СТАРТ] repo-a: начинаю синхронизацию"})
+	next = updated.(Model)
+
+	log := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(log, "[СТАРТ] repo-a: начинаю синхронизацию") {
+		t.Fatalf("expected startup log to contain [СТАРТ] entry, got %q", log)
+	}
+	if strings.Contains(log, "[GIT] repo-a: получаю ветки") {
+		t.Fatalf("did not expect synthetic [GIT] stage before real events, got %q", log)
+	}
+	if strings.Contains(log, "[JIRA] repo-a: проверяю статусы") {
+		t.Fatalf("did not expect synthetic [JIRA] stage before real events, got %q", log)
 	}
 }
 

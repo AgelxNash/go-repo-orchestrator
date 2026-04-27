@@ -38,6 +38,8 @@ type PrefetchBatchProgress struct {
 	Total      int
 }
 
+type PrefetchProgressCallback func(PrefetchBatchProgress)
+
 type cacheEntry struct {
 	result    StatusResult
 	expiresAt time.Time
@@ -209,10 +211,10 @@ type browserSearchResponse struct {
 }
 
 func (s *StatusService) PrefetchStatuses(requests []StatusBatchRequest) {
-	_ = s.PrefetchStatusesWithProgress(requests)
+	_ = s.PrefetchStatusesWithProgress(requests, nil)
 }
 
-func (s *StatusService) PrefetchStatusesWithProgress(requests []StatusBatchRequest) []PrefetchBatchProgress {
+func (s *StatusService) PrefetchStatusesWithProgress(requests []StatusBatchRequest, onProgress PrefetchProgressCallback) []PrefetchBatchProgress {
 	if s == nil || len(requests) == 0 {
 		return nil
 	}
@@ -274,13 +276,17 @@ func (s *StatusService) PrefetchStatusesWithProgress(requests []StatusBatchReque
 
 			batchIndex++
 			processed += len(batch)
-			progress = append(progress, PrefetchBatchProgress{
+			progressItem := PrefetchBatchProgress{
 				BatchIndex: batchIndex,
 				BatchTotal: batchTotal,
 				BatchSize:  len(batch),
 				Processed:  processed,
 				Total:      total,
-			})
+			}
+			if onProgress != nil {
+				onProgress(progressItem)
+			}
+			progress = append(progress, progressItem)
 		}
 	}
 
