@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -11,20 +10,64 @@ import (
 	"github.com/agelxnash/go-repo-orchestrator/internal/usecase"
 )
 
+func waitRepoLoadJiraProgressCmd(repoName string, startup bool, stream <-chan usecase.RepoLoadProgress) tea.Cmd {
+	if stream == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		progress, ok := <-stream
+		if !ok {
+			return nil
+		}
+		return repoLoadJiraProgressMsg{
+			repoName: repoName,
+			startup:  startup,
+			progress: progress,
+			stream:   stream,
+		}
+	}
+}
+
 // loadRepoBranchesCmd запускает загрузку веток репозитория и отправляет поэтапные события в лог.
 func loadRepoBranchesCmd(ctx context.Context, cleaner *usecase.Cleaner, repo config.RepoConfig, requestID int, startup bool, actionKey string, actionID int) tea.Cmd {
+	progressStream := make(chan usecase.RepoLoadProgress, 2048)
+	progressCmd := waitRepoLoadJiraProgressCmd(repo.Name, startup, progressStream)
+
 	if !startup {
-		return func() tea.Msg {
-			rb, err := cleaner.LoadRepoBranches(ctx, repo)
-			return branchesLoadedMsg{requestID: requestID, actionKey: actionKey, actionID: actionID, repoName: repo.Name, rb: rb, err: err, startup: false}
-		}
+		return tea.Batch(progressCmd, func() tea.Msg {
+			rb, summary, err := cleaner.LoadRepoBranchesWithProgress(ctx, repo, func(item usecase.RepoLoadProgress) {
+				select {
+				case progressStream <- item:
+				case <-ctx.Done():
+				}
+			})
+			close(progressStream)
+			return branchesLoadedMsg{
+				requestID:            requestID,
+				actionKey:            actionKey,
+				actionID:             actionID,
+				repoName:             repo.Name,
+				rb:                   rb,
+				err:                  err,
+				startup:              false,
+				jiraBatchProgress:    summary.JiraBatchProgress,
+				jiraProgressStreamed: summary.JiraProgressStreamed,
+			}
+		})
 	}
 
 	stageGit := func() tea.Msg {
-		return startupLogMsg{fmt.Sprintf("[GIT] %s: получение веток...", repo.Name)}
+		return startupLogMsg{"[СТАРТ] " + repo.Name + ": начинаю синхронизацию"}
 	}
 	loadAndReport := func() tea.Msg {
-		rb, err := cleaner.LoadRepoBranches(ctx, repo)
+		rb, summary, err := cleaner.LoadRepoBranchesWithProgress(ctx, repo, func(item usecase.RepoLoadProgress) {
+			select {
+			case progressStream <- item:
+			case <-ctx.Done():
+			}
+		})
+		close(progressStream)
 		if err != nil {
 			return branchesLoadedMsg{requestID: requestID, actionKey: actionKey, actionID: actionID, repoName: repo.Name, rb: rb, err: err, startup: true}
 		}
@@ -39,18 +82,20 @@ func loadRepoBranchesCmd(ctx context.Context, cleaner *usecase.Cleaner, repo con
 			syncNote = " [из кэша]"
 		}
 		return branchesLoadedMsg{
-			requestID:    requestID,
-			actionKey:    actionKey,
-			actionID:     actionID,
-			repoName:     repo.Name,
-			rb:           rb,
-			err:          nil,
-			startup:      true,
-			jiraResolved: jiraResolved,
-			syncNote:     syncNote,
+			requestID:            requestID,
+			actionKey:            actionKey,
+			actionID:             actionID,
+			repoName:             repo.Name,
+			rb:                   rb,
+			err:                  nil,
+			startup:              true,
+			jiraResolved:         jiraResolved,
+			jiraBatchProgress:    summary.JiraBatchProgress,
+			jiraProgressStreamed: summary.JiraProgressStreamed,
+			syncNote:             syncNote,
 		}
 	}
-	return tea.Batch(stageGit, loadAndReport)
+	return tea.Batch(stageGit, progressCmd, loadAndReport)
 }
 
 func loadRepoStatCmd(ctx context.Context, cleaner *usecase.Cleaner, repo config.RepoConfig, startup bool, actionKey string, actionID int) tea.Cmd {

@@ -708,6 +708,429 @@ func TestStartupPlaywrightSuccessMarksReadyInProgressScreen(t *testing.T) {
 	}
 }
 
+func TestStartupTracksOverallProgressAcrossAllTasks(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-path", Path: "/tmp/repo-path"},
+			{Name: "repo-url", URL: "https://example.com/repo-url.git"},
+		},
+	}, nil, false)
+
+	m.SetPlaywrightStartupStartFn(func() error { return nil })
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	if next.startupTotal != 3 {
+		t.Fatalf("expected startupTotal=3 (path+url+playwright), got %d", next.startupTotal)
+	}
+	if next.startupPending != 3 {
+		t.Fatalf("expected startupPending=3 at start, got %d", next.startupPending)
+	}
+	if !strings.Contains(next.viewStartupScreen(), "Задачи startup") {
+		t.Fatalf("expected startup screen to show overall progress line, got %q", next.viewStartupScreen())
+	}
+
+	updated, _ = next.Update(playwrightStartupCompletedMsg{})
+	next = updated.(Model)
+	if got := next.startupTotal - next.startupPending; got != 1 {
+		t.Fatalf("expected completed startup tasks=1 after playwright, got %d", got)
+	}
+
+	updated, _ = next.Update(branchesLoadedMsg{requestID: next.repoLoadReq["repo-url"], repoName: "repo-url", startup: true, rb: model.RepoBranches{RepoName: "repo-url"}})
+	next = updated.(Model)
+	if got := next.startupTotal - next.startupPending; got != 2 {
+		t.Fatalf("expected completed startup tasks=2 after url repo, got %d", got)
+	}
+
+	updated, _ = next.Update(branchesLoadedMsg{requestID: next.repoLoadReq["repo-path"], repoName: "repo-path", startup: true, rb: model.RepoBranches{RepoName: "repo-path"}})
+	next = updated.(Model)
+	if got := next.startupTotal - next.startupPending; got != 3 {
+		t.Fatalf("expected completed startup tasks=3 after all tasks, got %d", got)
+	}
+}
+
+func TestStartupCountsLastRepoOnFinalBranchesLoadedTask(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a"},
+	})
+	next = updated.(Model)
+
+	if next.startupRepoTotal != 1 {
+		t.Fatalf("expected startupRepoTotal=1, got %d", next.startupRepoTotal)
+	}
+	if next.startupRepoDone != 1 {
+		t.Fatalf("expected startupRepoDone=1 after final task, got %d", next.startupRepoDone)
+	}
+	if next.startupLoading {
+		t.Fatal("expected startupLoading=false after final startup task")
+	}
+}
+
+func TestStartupCountsLastRepoOnFinalRepoStatTask(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-selected", Path: "/tmp/repo-selected"},
+			{Name: "repo-stat", Path: "/tmp/repo-stat"},
+		},
+	}, nil, false)
+
+	m.repoIdx = 0
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-selected"],
+		repoName:  "repo-selected",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-selected"},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(repoStatLoadedMsg{
+		repoName: "repo-stat",
+		startup:  true,
+		stat:     model.RepoStat{Loaded: true},
+	})
+	next = updated.(Model)
+
+	if next.startupRepoTotal != 2 {
+		t.Fatalf("expected startupRepoTotal=2, got %d", next.startupRepoTotal)
+	}
+	if next.startupRepoDone != 2 {
+		t.Fatalf("expected startupRepoDone=2 after final task, got %d", next.startupRepoDone)
+	}
+	if next.startupLoading {
+		t.Fatal("expected startupLoading=false after final startup task")
+	}
+}
+
+func TestStartupRepoStatLoadedSetsResultStageForNonFinalTask(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-selected", Path: "/tmp/repo-selected"},
+			{Name: "repo-stat", Path: "/tmp/repo-stat"},
+		},
+	}, nil, false)
+
+	m.repoIdx = 0
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(repoStatLoadedMsg{
+		repoName: "repo-stat",
+		startup:  true,
+		stat:     model.RepoStat{Loaded: true},
+	})
+	next = updated.(Model)
+
+	if !next.startupLoading {
+		t.Fatal("expected startupLoading=true for non-final startup task")
+	}
+	if next.startupCurrentRepo != "repo-stat" {
+		t.Fatalf("expected startupCurrentRepo=repo-stat, got %q", next.startupCurrentRepo)
+	}
+	if next.startupCurrentStage != "получение результата статуса Git" {
+		t.Fatalf("expected startupCurrentStage to be repoStat result label, got %q", next.startupCurrentStage)
+	}
+}
+
+func TestStartupViewShowsRepoAndStageWithoutAbstractHints(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	m.width = 120
+	m.height = 30
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	next.setStartupStage("repo-a", "загрузка веток")
+	view := next.viewStartupScreen()
+
+	if !strings.Contains(view, "Репозитории:") {
+		t.Fatalf("expected startup view to show repo progress, got %q", view)
+	}
+	if !strings.Contains(view, "Текущий репозиторий: repo-a") {
+		t.Fatalf("expected startup view to show current repo, got %q", view)
+	}
+	if !strings.Contains(view, "Этап: загрузка веток") {
+		t.Fatalf("expected startup view to show current stage, got %q", view)
+	}
+	if strings.Contains(view, "Heartbeat:") {
+		t.Fatalf("did not expect heartbeat line in startup view, got %q", view)
+	}
+}
+
+func TestStartupViewShowsElapsedAndStageElapsed(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	m.width = 120
+	m.height = 30
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	start := time.Now().Add(-14 * time.Second)
+	next.setStartupStage("repo-a", "проверка Jira")
+	next.startupStartedAt = start
+	next.startupStageStartedAt = start
+
+	updated, _ = next.Update(startupTimerTickMsg{at: start.Add(14 * time.Second)})
+	next = updated.(Model)
+	view := next.viewStartupScreen()
+
+	if !strings.Contains(view, "Прошло: 14с") {
+		t.Fatalf("expected startup elapsed timer in view, got %q", view)
+	}
+	if !strings.Contains(view, "Этап: проверка Jira") {
+		t.Fatalf("expected stage line in view, got %q", view)
+	}
+	if !strings.Contains(view, "(14с)") {
+		t.Fatalf("expected stage elapsed timer in view, got %q", view)
+	}
+}
+
+func TestStartupStageTimerDoesNotResetOnSameProgressLog(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	next.setStartupStage("repo-a", "проверка Jira")
+	startedAt := time.Now().Add(-9 * time.Second)
+	next.startupStageStartedAt = startedAt
+	next.startupStageElapsed = 9 * time.Second
+
+	updated, _ = next.Update(startupLogMsg{text: "[JIRA] repo-a: проверка Jira"})
+	next = updated.(Model)
+
+	if !next.startupStageStartedAt.Equal(startedAt) {
+		t.Fatalf("expected stage start time to stay unchanged, got %v want %v", next.startupStageStartedAt, startedAt)
+	}
+	if next.startupStageElapsed != 9*time.Second {
+		t.Fatalf("expected stage elapsed to stay 9s, got %s", next.startupStageElapsed)
+	}
+}
+
+func TestStartupViewDoesNotShowLongRunningHint(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+	view := next.viewStartupScreen()
+	if strings.Contains(view, "Startup занимает больше обычного") {
+		t.Fatalf("did not expect long-running hint in startup view, got %q", view)
+	}
+}
+
+func TestStartupViewDoesNotShowLastActivity(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	m.width = 120
+	m.height = 30
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	view := next.viewStartupScreen()
+
+	if strings.Contains(view, "Последняя активность") {
+		t.Fatalf("did not expect last activity line in startup view, got %q", view)
+	}
+}
+
+func TestStartupEventAfterCompletionDoesNotResumeCycle(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{requestID: next.repoLoadReq["repo-a"], repoName: "repo-a", startup: true, rb: model.RepoBranches{RepoName: "repo-a"}})
+	next = updated.(Model)
+
+	if next.startupLoading {
+		t.Fatal("expected startup loading to be disabled after completion")
+	}
+	if next.startupCurrentOp != "Инициализация завершена" {
+		t.Fatalf("expected final startup operation, got %q", next.startupCurrentOp)
+	}
+
+	finalOp := next.startupCurrentOp
+	updated, cmd := next.Update(startupLogMsg{text: "[GIT] repo-a: позднее событие"})
+	after := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("expected no follow-up command after startup completion")
+	}
+	if after.startupLoading {
+		t.Fatal("expected startup loading to remain disabled")
+	}
+	if after.startupCurrentOp != finalOp {
+		t.Fatalf("expected final startup operation to stay unchanged, got %q", after.startupCurrentOp)
+	}
+}
+
+func TestStartupLateMessagesDoNotOverrideFinalCurrentOperation(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{requestID: next.repoLoadReq["repo-a"], repoName: "repo-a", startup: true, rb: model.RepoBranches{RepoName: "repo-a"}})
+	next = updated.(Model)
+
+	if next.startupCurrentOp != "Инициализация завершена" {
+		t.Fatalf("expected final startup operation, got %q", next.startupCurrentOp)
+	}
+
+	updated, _ = next.Update(repoStatLoadedMsg{repoName: "repo-a", startup: true, stat: model.RepoStat{Loaded: true}})
+	after := updated.(Model)
+
+	if after.startupCurrentOp != "Инициализация завершена" {
+		t.Fatalf("expected late startup message not to override final operation, got %q", after.startupCurrentOp)
+	}
+}
+
+func TestStartupEventLogIncludesJiraBatchProgress(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a", Branches: make([]model.BranchInfo, 3)},
+		jiraBatchProgress: []usecase.RepoLoadProgress{
+			{BatchIndex: 1, BatchTotal: 2, Processed: 2, Total: 3},
+			{BatchIndex: 2, BatchTotal: 2, Processed: 3, Total: 3},
+		},
+	})
+	next = updated.(Model)
+
+	log := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(log, "[JIRA] repo-a: проверена пачка 1/2") {
+		t.Fatalf("expected first batch progress in startup log, got %q", log)
+	}
+	if !strings.Contains(log, "[JIRA] repo-a: обработано 3/3 веток") {
+		t.Fatalf("expected cumulative branch progress in startup log, got %q", log)
+	}
+}
+
+func TestStartupEventLogDoesNotContainSyntheticGitAndJiraStagesBeforeRealEvents(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(startupLogMsg{text: "[СТАРТ] repo-a: начинаю синхронизацию"})
+	next = updated.(Model)
+
+	log := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(log, "[СТАРТ] repo-a: начинаю синхронизацию") {
+		t.Fatalf("expected startup log to contain [СТАРТ] entry, got %q", log)
+	}
+	if strings.Contains(log, "[GIT] repo-a: получаю ветки") {
+		t.Fatalf("did not expect synthetic [GIT] stage before real events, got %q", log)
+	}
+	if strings.Contains(log, "[JIRA] repo-a: проверяю статусы") {
+		t.Fatalf("did not expect synthetic [JIRA] stage before real events, got %q", log)
+	}
+}
+
+func TestStartupEventLogSkipsDuplicatedBatchProgressWhenStreamed(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(repoLoadJiraProgressMsg{
+		repoName: "repo-a",
+		startup:  true,
+		progress: usecase.RepoLoadProgress{BatchIndex: 1, BatchTotal: 2, Processed: 2, Total: 3},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID:            next.repoLoadReq["repo-a"],
+		repoName:             "repo-a",
+		startup:              true,
+		rb:                   model.RepoBranches{RepoName: "repo-a", Branches: make([]model.BranchInfo, 3)},
+		jiraProgressStreamed: true,
+		jiraBatchProgress: []usecase.RepoLoadProgress{
+			{BatchIndex: 1, BatchTotal: 2, Processed: 2, Total: 3},
+			{BatchIndex: 2, BatchTotal: 2, Processed: 3, Total: 3},
+		},
+	})
+	next = updated.(Model)
+
+	countBatchLogs := 0
+	for _, line := range next.eventLog {
+		if strings.Contains(line, "проверена пачка") {
+			countBatchLogs++
+		}
+	}
+	if countBatchLogs != 1 {
+		t.Fatalf("expected one streamed batch log without duplication, got %d; log=%q", countBatchLogs, strings.Join(next.eventLog, "\n"))
+	}
+}
+
+func TestRepoLoadLogIncludesJiraBatchSummaryOutsideStartup(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+
+	reqID := 1
+	m.repoLoadReq["repo-a"] = reqID
+	m.repoLoading["repo-a"] = true
+	m.activeRepo = model.RepoBranches{RepoName: "repo-a"}
+
+	updated, _ := m.Update(branchesLoadedMsg{
+		requestID: reqID,
+		repoName:  "repo-a",
+		startup:   false,
+		rb:        model.RepoBranches{RepoName: "repo-a", CurrentBranch: "main"},
+		jiraBatchProgress: []usecase.RepoLoadProgress{
+			{BatchIndex: 1, BatchTotal: 2, Processed: 20, Total: 87},
+			{BatchIndex: 2, BatchTotal: 2, Processed: 40, Total: 87},
+		},
+	})
+	next := updated.(Model)
+
+	log := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(log, "[JIRA] repo-a: обновлено 40/87") {
+		t.Fatalf("expected jira batch summary in repo load log, got %q", log)
+	}
+}
+
 func TestRepoCursorMoveDoesNotAutoRefresh(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{

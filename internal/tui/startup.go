@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -28,10 +29,31 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 
 	m.startupLoading = startup
 	m.startupPending = 0
+	m.startupTotal = 0
 	m.startupURLTotal = 0
 	m.startupURLDone = 0
+	m.startupRepoTotal = len(m.cfg.Repos)
+	m.startupRepoDone = 0
+	m.startupCurrentRepo = ""
+	m.startupCurrentStage = ""
+	m.startupCurrentOp = "Подготовка startup-задач"
+	m.startupStartedAt = time.Now()
+	m.startupElapsed = 0
+	m.startupStageStartedAt = m.startupStartedAt
+	m.startupStageElapsed = 0
+	for repoName := range m.startupRepoDoneSet {
+		delete(m.startupRepoDoneSet, repoName)
+	}
 
 	if !startup {
+		m.startupCurrentOp = ""
+		m.startupCurrentRepo = ""
+		m.startupCurrentStage = ""
+		m.startupStartedAt = time.Time{}
+		m.startupElapsed = 0
+		m.startupStageStartedAt = time.Time{}
+		m.startupStageElapsed = 0
+		m.startupTotal = 0
 		m.refreshLocked = true
 		m.refreshAll = true
 		m.refreshRepo = ""
@@ -45,8 +67,9 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	var cmds []tea.Cmd
 
 	if startup && m.startupPlaywrightStartFn != nil && !m.startupPlaywrightScheduled {
+		m.setStartupStage("", "инициализация Playwright")
 		cmds = append(cmds, tea.Batch(
-			func() tea.Msg { return startupLogMsg{"[PLAYWRIGHT] bootstrap/start runtime..."} },
+			func() tea.Msg { return startupLogMsg{"[СТАРТ] Playwright: запускаю runtime"} },
 			func() tea.Msg {
 				return playwrightStartupCompletedMsg{err: m.startupPlaywrightStartFn()}
 			},
@@ -63,17 +86,21 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 		switch repo.SourceType() {
 		case "url":
 			m.startupURLTotal++
+			m.setStartupStage(repo.Name, "подготовка загрузки веток")
 			cmds = append(cmds, m.startLoadRepo(repo, false, startup))
 			m.startupPending++
 		case "opensource":
 			m.startupURLTotal++
+			m.setStartupStage(repo.Name, "подготовка загрузки веток")
 			cmds = append(cmds, m.startLoadRepo(repo, false, startup))
 			m.startupPending++
 		case "path":
 			if idx == m.repoIdx {
+				m.setStartupStage(repo.Name, "подготовка загрузки веток")
 				cmds = append(cmds, m.startLoadRepo(repo, false, startup))
 				m.startupPending++
 			} else {
+				m.setStartupStage(repo.Name, "подготовка статуса Git")
 				actionKey := actionKeyRepoStat(repo.Name)
 				ctx, actionID := m.beginAction(actionKey)
 				cmds = append(cmds, loadRepoStatCmd(ctx, m.clean, repo, startup, actionKey, actionID))
@@ -85,12 +112,15 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	if !startup {
 		m.statusLine = "Пересканирование всех репозиториев..."
 	} else {
+		m.startupTotal = m.startupPending
+		m.setStartupStage("", "выполнение startup-задач")
 		m.setStartupProgressStatus()
 	}
 
 	m.activateSelectedRepoFromCache()
 	if m.startupPending == 0 {
 		m.startupLoading = false
+		m.startupCurrentOp = ""
 		m.resetRefreshLock()
 		return nil
 	}
@@ -98,7 +128,9 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	if m.loadingSelectedRepo() || m.startupLoading || m.refreshLocked {
 		cmds = append(cmds, m.spinner.Tick)
 	}
-
+	if startup {
+		cmds = append(cmds, startupTimerTickCmd())
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -111,6 +143,10 @@ func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 	}
 	if m.startupPending == 0 {
 		m.startupLoading = false
+		m.startupCurrentOp = "Инициализация завершена"
+		m.startupCurrentRepo = ""
+		m.startupCurrentStage = "завершено"
+		m.startupStageElapsed = 0
 		if m.startupURLTotal > 0 {
 			m.statusLine = fmt.Sprintf("Первичная синхронизация URL-репозиториев завершена: %d/%d", m.startupURLDone, m.startupURLTotal)
 		}
@@ -134,7 +170,8 @@ func (m *Model) finishStartupURLTaskIfNeeded(repoName string, startup bool) {
 
 	if m.startupURLDone < m.startupURLTotal {
 		m.startupURLDone++
-		m.pushLog(fmt.Sprintf("[%d/%d] %s — синхронизирован", m.startupURLDone, m.startupURLTotal, repoName))
+		m.setStartupStage(repoName, "синхронизация URL-репозитория")
+		m.pushLog(fmt.Sprintf("[OK] %s: синхронизация URL %d/%d", repoName, m.startupURLDone, m.startupURLTotal))
 	}
 }
 
@@ -145,6 +182,20 @@ func (m *Model) setStartupProgressStatus() {
 	}
 
 	m.statusLine = fmt.Sprintf("Первичная синхронизация URL-репозиториев: %d/%d", m.startupURLDone, m.startupURLTotal)
+}
+
+func (m *Model) markStartupRepoDone(repoName string) {
+	repoName = strings.TrimSpace(repoName)
+	if repoName == "" {
+		return
+	}
+	if m.startupRepoDoneSet[repoName] {
+		return
+	}
+	m.startupRepoDoneSet[repoName] = true
+	if m.startupRepoDone < m.startupRepoTotal {
+		m.startupRepoDone++
+	}
 }
 
 func (m *Model) finishRefreshIfMatched(repoName string, requestID int) {
@@ -209,18 +260,112 @@ func (m *Model) pushLog(msg string) {
 		m.eventLog = m.eventLog[len(m.eventLog)-maxEventLog:]
 	}
 }
+func (m *Model) setStartupStage(repoName, stage string) {
+	if !m.startupLoading {
+		return
+	}
+	stage = strings.TrimSpace(stage)
+	repoName = strings.TrimSpace(repoName)
+	stageChanged := m.startupCurrentRepo != repoName || m.startupCurrentStage != stage
+	m.startupCurrentRepo = repoName
+	m.startupCurrentStage = stage
+	if stageChanged {
+		m.startupStageStartedAt = time.Now()
+		m.startupStageElapsed = 0
+	}
+	if repoName != "" && stage != "" {
+		m.startupCurrentOp = fmt.Sprintf("%s: %s", repoName, stage)
+		return
+	}
+	if stage != "" {
+		m.startupCurrentOp = stage
+		return
+	}
+	m.startupCurrentOp = repoName
+}
+
+func startupTimerTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return startupTimerTickMsg{at: t}
+	})
+}
+
+func (m *Model) updateStartupElapsed(now time.Time) {
+	if !m.startupLoading {
+		return
+	}
+	if m.startupStartedAt.IsZero() {
+		m.startupStartedAt = now
+	}
+	m.startupElapsed = now.Sub(m.startupStartedAt).Round(time.Second)
+	if !m.startupStageStartedAt.IsZero() {
+		m.startupStageElapsed = now.Sub(m.startupStageStartedAt).Round(time.Second)
+	}
+}
+
+func formatSeconds(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	return fmt.Sprintf("%dс", int(d.Round(time.Second)/time.Second))
+}
+
+func (m *Model) updateStartupCurrentOpFromLog(entry string) {
+	if !m.startupLoading {
+		return
+	}
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return
+	}
+	if strings.HasPrefix(entry, "[") {
+		if idx := strings.Index(entry, "]"); idx >= 0 && idx+1 < len(entry) {
+			entry = strings.TrimSpace(entry[idx+1:])
+		}
+	}
+	if before, after, ok := strings.Cut(entry, ":"); ok {
+		m.setStartupStage(before, after)
+		return
+	}
+	m.setStartupStage("", entry)
+}
 
 func (m Model) viewStartupScreen() string {
 	usableW := max(40, m.width-4)
 	usableH := max(12, m.height-2)
 
 	progHeader := titleStyle.Width(usableW).Render("  go-repo-orchestrator  ")
-	spinLine := fmt.Sprintf("  %s Инициализация репозиториев...  ", m.spinner.View())
+	spinLine := fmt.Sprintf("  %s Инициализация репозиториев  ", m.spinner.View())
 
 	var progressLines []string
 	if m.startupURLTotal > 0 {
 		bar := startupProgressBar(m.startupURLDone, m.startupURLTotal, usableW-30)
 		progressLines = append(progressLines, fmt.Sprintf("  Синхронизация URL-репо: %s %d/%d  ", bar, m.startupURLDone, m.startupURLTotal))
+	}
+	if m.startupRepoTotal > 0 {
+		bar := startupProgressBar(m.startupRepoDone, m.startupRepoTotal, usableW-30)
+		progressLines = append(progressLines, fmt.Sprintf("  Репозитории: %s %d/%d  ", bar, m.startupRepoDone, m.startupRepoTotal))
+	}
+	if m.startupTotal > 0 {
+		startupDone := max(0, m.startupTotal-m.startupPending)
+		bar := startupProgressBar(startupDone, m.startupTotal, usableW-30)
+		progressLines = append(progressLines, fmt.Sprintf("  Задачи startup: %s %d/%d  ", bar, startupDone, m.startupTotal))
+	}
+	if m.startupCurrentRepo != "" {
+		progressLines = append(progressLines, fmt.Sprintf("  Текущий репозиторий: %s  ", m.startupCurrentRepo))
+	}
+	if m.startupCurrentStage != "" {
+		if m.startupStageElapsed > 0 {
+			progressLines = append(progressLines, fmt.Sprintf("  Этап: %s (%s)  ", m.startupCurrentStage, formatSeconds(m.startupStageElapsed)))
+		} else {
+			progressLines = append(progressLines, fmt.Sprintf("  Этап: %s  ", m.startupCurrentStage))
+		}
+	}
+	if m.startupElapsed > 0 {
+		progressLines = append(progressLines, fmt.Sprintf("  Прошло: %s  ", formatSeconds(m.startupElapsed)))
+	}
+	if m.startupCurrentOp != "" {
+		progressLines = append(progressLines, fmt.Sprintf("  Операция: %s  ", m.startupCurrentOp))
 	}
 	if m.startupPlaywrightStartFn != nil {
 		playwrightLine := "  Playwright: ожидание...  "
@@ -233,9 +378,6 @@ func (m Model) viewStartupScreen() string {
 			playwrightLine = "  Playwright: запуск...  "
 		}
 		progressLines = append(progressLines, playwrightLine)
-	}
-	if m.startupPending > 0 {
-		progressLines = append(progressLines, fmt.Sprintf("  Осталось задач: %d  ", m.startupPending))
 	}
 	if m.startupWarn != "" {
 		progressLines = append(progressLines, warnStyle.Render("  "+m.startupWarn+"  "))
@@ -296,7 +438,7 @@ func (m Model) viewStartupLogPanel(width, height int) string {
 	innerH := max(1, height-4)
 
 	var lines []string
-	lines = append(lines, headerSt.Render(" ЛОГА СОБЫТИЙ ЗАГРУЗКИ "))
+	lines = append(lines, headerSt.Render(" ЛОГ СОБЫТИЙ ЗАГРУЗКИ "))
 
 	if len(m.eventLog) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(dimFg).Background(logBg).Render("  (ожидание событий...)"))

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -103,10 +104,24 @@ type Model struct {
 
 	spinner spinner.Model
 
-	startupLoading  bool
-	startupPending  int
-	startupURLTotal int
-	startupURLDone  int
+	startupLoading   bool
+	startupPending   int
+	startupTotal     int
+	startupURLTotal  int
+	startupURLDone   int
+	startupRepoTotal int
+	startupRepoDone  int
+
+	startupCurrentRepo  string
+	startupCurrentStage string
+	startupRepoDoneSet  map[string]bool
+
+	startupCurrentOp string
+
+	startupStartedAt      time.Time
+	startupElapsed        time.Duration
+	startupStageStartedAt time.Time
+	startupStageElapsed   time.Duration
 
 	startupPlaywrightStartFn   func() error
 	startupPlaywrightState     startupPlaywrightState
@@ -170,6 +185,7 @@ func NewModel(cfg *config.Config, cleaner *usecase.Cleaner, _ bool) Model {
 		height:                 36,
 		eventLog:               make([]string, 0, 50),
 		startupPlaywrightState: startupPlaywrightSkipped,
+		startupRepoDoneSet:     make(map[string]bool),
 		appCtx:                 appCtx,
 		appCancel:              appCancel,
 		actionCancels:          make(map[string]actionCancelRef),
@@ -233,7 +249,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case startupLogMsg:
 		m.pushLog(msg.text)
+		m.updateStartupCurrentOpFromLog(msg.text)
 		return m, nil
+
+	case startupTimerTickMsg:
+		if !m.startupLoading {
+			return m, nil
+		}
+		m.updateStartupElapsed(msg.at)
+		return m, startupTimerTickCmd()
+
+	case repoLoadJiraProgressMsg:
+		if msg.startup && m.startupLoading {
+			m.setStartupStage(msg.repoName, "проверка Jira")
+		}
+		if msg.progress.BatchTotal > 0 {
+			m.pushLog(fmt.Sprintf("[JIRA] %s: проверена пачка %d/%d", msg.repoName, msg.progress.BatchIndex, msg.progress.BatchTotal))
+		}
+		if msg.progress.Total > 0 {
+			m.pushLog(fmt.Sprintf("[JIRA] %s: обработано %d/%d веток", msg.repoName, msg.progress.Processed, msg.progress.Total))
+		}
+		return m, waitRepoLoadJiraProgressCmd(msg.repoName, msg.startup, msg.stream)
 
 	case playwrightStartupCompletedMsg:
 		m.finishStartupTaskIfNeeded(true)
@@ -241,7 +277,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			warn := "Предупреждение: браузер Playwright не запущен: " + msg.err.Error()
 			m.SetStartupWarning(warn)
 			m.startupPlaywrightState = startupPlaywrightFailed
-			m.pushLog("[WARN] Playwright: " + msg.err.Error())
+			m.pushLog("[WARN] Playwright: runtime недоступен, использую HTTP fallback: " + msg.err.Error())
 			if m.startupLoading {
 				m.setStartupProgressStatus()
 			}
@@ -249,7 +285,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.startupPlaywrightState = startupPlaywrightReady
-		m.pushLog("[OK] Playwright runtime готов")
+		m.setStartupStage("", "инициализация Playwright")
+		m.pushLog("[OK] Playwright: runtime готов")
 		if m.startupLoading {
 			m.setStartupProgressStatus()
 		}
@@ -268,11 +305,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if expectedReqID := m.repoLoadReq[msg.repoName]; expectedReqID != msg.requestID {
 			return m, nil
 		}
+		if msg.startup && m.startupLoading {
+			m.setStartupStage(msg.repoName, "получение результата загрузки веток")
+		}
 		startupInProgress := m.startupLoading
 		m.repoLoading[msg.repoName] = false
 		m.finishRefreshIfMatched(msg.repoName, msg.requestID)
 		m.finishRefreshPendingIfNeeded(msg.repoName)
 		m.finishStartupURLTaskIfNeeded(msg.repoName, msg.startup)
+		if msg.startup && startupInProgress {
+			m.markStartupRepoDone(msg.repoName)
+		}
 		m.finishStartupTaskIfNeeded(msg.startup)
 		if msg.startup && startupInProgress && m.startupLoading {
 			m.setStartupProgressStatus()
@@ -287,6 +330,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(m.repoData, msg.repoName)
 			if msg.repoName == m.selectedRepoName() && (!msg.startup || !startupInProgress) {
 				m.statusLine = fmt.Sprintf("Не удалось загрузить %q: %s", msg.repoName, stat.LoadError)
+			}
+			if msg.startup {
+				m.pushLog(fmt.Sprintf("[ERR] %s: загрузка веток не удалась: %s", msg.repoName, stat.LoadError))
 			}
 			m.activateSelectedRepoFromCache()
 			return m, nil
@@ -316,19 +362,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.startup {
-			if msg.err != nil {
-				m.pushLog(fmt.Sprintf("[ERR] %s: %s", msg.repoName, msg.err.Error()))
-			} else if syncWarning != "" {
-				m.pushLog(fmt.Sprintf("[WARN] %s: %d веток [из кэша: %s]", msg.repoName, len(msg.rb.Branches), syncWarning))
-			} else {
-				jiraNote := ""
-				if msg.jiraResolved > 0 {
-					jiraNote = fmt.Sprintf(", Jira: %d", msg.jiraResolved)
+			m.pushLog(fmt.Sprintf("[GIT] %s: загружено %d веток", msg.repoName, len(msg.rb.Branches)))
+			if !msg.jiraProgressStreamed {
+				for _, batch := range msg.jiraBatchProgress {
+					if batch.BatchTotal > 0 {
+						m.pushLog(fmt.Sprintf("[JIRA] %s: проверена пачка %d/%d", msg.repoName, batch.BatchIndex, batch.BatchTotal))
+					}
+					if batch.Total > 0 {
+						m.pushLog(fmt.Sprintf("[JIRA] %s: обработано %d/%d веток", msg.repoName, batch.Processed, batch.Total))
+					}
 				}
-				m.pushLog(fmt.Sprintf("[OK] %s: %d веток%s%s",
-					msg.repoName, len(msg.rb.Branches), jiraNote, msg.syncNote))
 			}
+			if msg.jiraResolved > 0 {
+				m.pushLog(fmt.Sprintf("[JIRA] %s: проверены статусы для %d веток", msg.repoName, msg.jiraResolved))
+			}
+			if syncWarning != "" {
+				m.pushLog(fmt.Sprintf("[WARN] %s: использую кэш: %s", msg.repoName, syncWarning))
+			}
+			m.pushLog(fmt.Sprintf("[OK] %s: синхронизация завершена%s", msg.repoName, msg.syncNote))
 		} else {
+			if len(msg.jiraBatchProgress) > 0 && !msg.jiraProgressStreamed {
+				last := msg.jiraBatchProgress[len(msg.jiraBatchProgress)-1]
+				if last.Total > 0 {
+					m.pushLog(fmt.Sprintf("[JIRA] %s: обновлено %d/%d", msg.repoName, last.Processed, last.Total))
+				}
+			}
 			if syncWarning != "" {
 				m.pushLog(fmt.Sprintf("[WARN] %s: %s", msg.repoName, syncWarning))
 			} else {
@@ -358,6 +416,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repoStatLoadedMsg:
 		m.finishAction(msg.actionKey, msg.actionID)
 		m.finishRefreshPendingIfNeeded(msg.repoName)
+		startupInProgress := m.startupLoading
+		if msg.startup && startupInProgress {
+			m.setStartupStage(msg.repoName, "получение результата статуса Git")
+		}
+		if msg.startup && startupInProgress {
+			m.markStartupRepoDone(msg.repoName)
+		}
 		m.finishStartupTaskIfNeeded(msg.startup)
 		stat := msg.stat
 		stat.Loaded = true
@@ -373,6 +438,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.repoStats[msg.repoName] = stat
+		if msg.startup && startupInProgress {
+			if stat.LoadError != "" {
+				m.pushLog(fmt.Sprintf("[ERR] %s: статус Git не получен: %s", msg.repoName, stat.LoadError))
+			} else if strings.TrimSpace(stat.SyncWarning) != "" {
+				m.pushLog(fmt.Sprintf("[WARN] %s: статус Git из локальных данных: %s", msg.repoName, stat.SyncWarning))
+				m.pushLog(fmt.Sprintf("[OK] %s: синхронизация завершена", msg.repoName))
+			} else {
+				m.pushLog(fmt.Sprintf("[GIT] %s: статус получен (ветка: %s)", msg.repoName, valueOrDash(stat.CurrentBranch)))
+				m.pushLog(fmt.Sprintf("[OK] %s: синхронизация завершена", msg.repoName))
+			}
+		}
 		return m, nil
 
 	case checkoutCompletedMsg:
