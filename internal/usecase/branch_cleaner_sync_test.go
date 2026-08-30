@@ -402,7 +402,7 @@ func TestResolveRepoForReadURLFallbackIgnoresParentCancelForLocalCacheCheck(t *t
 	if repoPath != "/tmp/state/workspace/repo" {
 		t.Fatalf("unexpected fallback path: %q", repoPath)
 	}
-	if syncWarning == "" {
+	if syncWarning.Message == "" {
 		t.Fatal("expected sync warning when remote sync fails")
 	}
 }

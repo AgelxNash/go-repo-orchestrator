@@ -103,6 +103,17 @@ func (b BranchInfo) IsLocal() bool {
 	return b.Scope == BranchScopeLocal
 }
 
+// RepoWarning описывает non-fatal предупреждение по репозиторию.
+type RepoWarning struct {
+	Code    string
+	Message string
+}
+
+// Text возвращает человекочитаемое сообщение предупреждения.
+func (w RepoWarning) Text() string {
+	return w.Message
+}
+
 // RepoBranches объединяет информацию о ветках конкретного репозитория.
 type RepoBranches struct {
 	RepoName      string
@@ -110,6 +121,7 @@ type RepoBranches struct {
 	RepoSource    string
 	RepoPath      string
 	SyncWarning   string
+	Warning       RepoWarning
 	DefaultBranch string
 	CurrentBranch string
 	DirtyStats    DirtyStats
@@ -122,6 +134,7 @@ type RepoStat struct {
 	DirtyStats    DirtyStats
 	LoadError     string
 	SyncWarning   string
+	Warning       RepoWarning
 	Loaded        bool
 }
 
@@ -132,7 +145,7 @@ func (s RepoStat) HasError() bool {
 
 // HasSyncWarning возвращает true, если синхронизация remote не удалась, но локальные данные доступны.
 func (s RepoStat) HasSyncWarning() bool {
-	return s.SyncWarning != ""
+	return s.SyncWarning != "" || s.Warning.Message != ""
 }
 
 // ScriptResult хранит результат генерации скрипта удаления веток.
