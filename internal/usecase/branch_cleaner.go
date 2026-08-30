@@ -648,10 +648,13 @@ func buildScriptContent(repoPath string, branches []model.BranchInfo, format mod
 	if format == model.ScriptFormatBAT {
 		b.WriteString("@echo off\n")
 		b.WriteString("setlocal\n")
-		b.WriteString("cd /d \"")
-		b.WriteString(escapeForBat(repoPath))
-		b.WriteString("\"\n\n")
+		b.WriteString("cd /d ")
+		b.WriteString(quoteForBat(repoPath))
+		b.WriteString("\n\n")
 		for _, branch := range branches {
+			if !branchPassesSanityCheck(branch) {
+				continue
+			}
 			command := buildDeleteCommandBAT(branch)
 			if command == "" {
 				continue
@@ -696,11 +699,14 @@ func buildDeleteCommandSH(branch model.BranchInfo) string {
 }
 
 func buildDeleteCommandBAT(branch model.BranchInfo) string {
+	if !branchPassesSanityCheck(branch) {
+		return ""
+	}
 	if branch.IsRemote() {
 		if !isRemoteDeleteResolvable(branch) {
 			return ""
 		}
-		return "git push \"" + escapeForBat(branch.RemoteName) + "\" --delete \"" + escapeForBat(branch.Name) + "\""
+		return "git push " + quoteForBat(branch.RemoteName) + " --delete " + quoteForBat(branch.Name)
 	}
 
 	flag := "-D"
@@ -708,7 +714,20 @@ func buildDeleteCommandBAT(branch model.BranchInfo) string {
 		flag = "-d"
 	}
 
-	return "git branch " + flag + " \"" + escapeForBat(branch.Name) + "\""
+	return "git branch " + flag + " " + quoteForBat(branch.Name)
+}
+
+// branchPassesSanityCheck отсекает ветки, не проходящие sanitizeBranchName
+// (control-символы, `%%`, недопустимая длина). Имена, прошедшие проверку,
+// считаются пригодными для встраивания в команды.
+func branchPassesSanityCheck(branch model.BranchInfo) bool {
+	if _, err := sanitizeBranchName(branch.Name); err != nil {
+		return false
+	}
+	if _, err := sanitizeBranchName(branch.RemoteName); err != nil {
+		return false
+	}
+	return true
 }
 
 func quoteForPOSIX(value string) string {
@@ -717,8 +736,4 @@ func quoteForPOSIX(value string) string {
 	}
 
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
-func escapeForBat(value string) string {
-	return strings.ReplaceAll(value, "\"", "\"\"")
 }
