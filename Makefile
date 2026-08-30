@@ -9,10 +9,20 @@ GOLANGCI_LINT := $(or $(shell command -v golangci-lint 2>/dev/null),$(shell go e
 GORELEASER := $(or $(shell command -v goreleaser 2>/dev/null),$(shell go env GOPATH)/bin/goreleaser)
 COMMITLINT := $(or $(shell command -v commitlint 2>/dev/null),$(shell go env GOPATH)/bin/commitlint)
 
-.PHONY: test lint build check fmt-check vet
+.PHONY: test lint build check fmt-check vet test-race coverage
 
 test:
 	go test $(GO_PACKAGES)
+
+test-race:
+	go test -race $(GO_PACKAGES)
+
+coverage:
+	mkdir -p tmp
+	go test -coverprofile=tmp/coverage.out $(GO_PACKAGES)
+	go tool cover -func=tmp/coverage.out
+	go tool cover -html=tmp/coverage.out -o tmp/coverage.html
+	@echo "Coverage report: tmp/coverage.html"
 
 lint:
 	@test -x "$(GOLANGCI_LINT)" || { \
