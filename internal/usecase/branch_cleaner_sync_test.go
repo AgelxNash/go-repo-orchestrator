@@ -30,8 +30,8 @@ type fakeGitClient struct {
 
 type fakeStatusResolver struct {
 	resolveFn          func(group, ticketURL, jiraBaseURL, key string) jira.StatusResult
-	prefetchFn         func(requests []jira.StatusBatchRequest)
-	prefetchProgressFn func(requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress
+	prefetchFn         func(ctx context.Context, requests []jira.StatusBatchRequest)
+	prefetchProgressFn func(ctx context.Context, requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress
 }
 
 func (f fakeStatusResolver) ResolveStatus(group, ticketURL, jiraBaseURL, key string) jira.StatusResult {
@@ -42,19 +42,19 @@ func (f fakeStatusResolver) ResolveStatus(group, ticketURL, jiraBaseURL, key str
 	return jira.StatusResult{Status: "-", State: jira.StatusStateUnmapped, Reason: jira.StatusReasonNoMapping}
 }
 
-func (f fakeStatusResolver) PrefetchStatuses(requests []jira.StatusBatchRequest) {
+func (f fakeStatusResolver) PrefetchStatuses(ctx context.Context, requests []jira.StatusBatchRequest) {
 	if f.prefetchFn != nil {
-		f.prefetchFn(requests)
+		f.prefetchFn(ctx, requests)
 	}
 }
 
-func (f fakeStatusResolver) PrefetchStatusesWithProgress(requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress {
+func (f fakeStatusResolver) PrefetchStatusesWithProgress(ctx context.Context, requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress {
 	if f.prefetchProgressFn != nil {
-		return f.prefetchProgressFn(requests, onProgress)
+		return f.prefetchProgressFn(ctx, requests, onProgress)
 	}
 
 	if f.prefetchFn != nil {
-		f.prefetchFn(requests)
+		f.prefetchFn(ctx, requests)
 	}
 
 	return nil
@@ -796,7 +796,7 @@ func TestLoadRepoBranchesPrefetchesJiraStatusesBeforeResolve(t *testing.T) {
 	prefetchCalls := 0
 	prefetched := make([]jira.StatusBatchRequest, 0)
 	cleaner := NewCleaner(git, WithJiraStatusResolver(fakeStatusResolver{
-		prefetchFn: func(requests []jira.StatusBatchRequest) {
+		prefetchFn: func(_ context.Context, requests []jira.StatusBatchRequest) {
 			prefetchCalls++
 			prefetched = append(prefetched, requests...)
 		},
@@ -859,7 +859,7 @@ func TestLoadRepoBranchesWithSummaryReturnsBatchProgress(t *testing.T) {
 	}
 
 	cleaner := NewCleaner(git, WithJiraStatusResolver(fakeStatusResolver{
-		prefetchProgressFn: func(requests []jira.StatusBatchRequest, _ jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress {
+		prefetchProgressFn: func(_ context.Context, requests []jira.StatusBatchRequest, _ jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress {
 			if len(requests) != 1 {
 				t.Fatalf("expected one prefetch request, got %d", len(requests))
 			}
@@ -933,7 +933,7 @@ func TestLoadRepoBranchesWithProgressStreamsViaJiraLayer(t *testing.T) {
 	progressObservedInPrefetch := false
 
 	cleaner := NewCleaner(git, WithJiraStatusResolver(fakeStatusResolver{
-		prefetchProgressFn: func(requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress {
+		prefetchProgressFn: func(_ context.Context, requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress {
 			if len(requests) != 1 {
 				t.Fatalf("expected one prefetch request, got %d", len(requests))
 			}

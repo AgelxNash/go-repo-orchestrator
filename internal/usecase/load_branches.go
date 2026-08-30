@@ -53,7 +53,7 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 	requests := collectJiraStatusRequests(repo, allBranches)
 	loadSummary := RepoLoadSummary{}
 	if prefetcher, ok := c.jira.(jiraStatusPrefetcherWithProgress); ok {
-		batchProgress := prefetcher.PrefetchStatusesWithProgress(requests, func(item jira.PrefetchBatchProgress) {
+		batchProgress := prefetcher.PrefetchStatusesWithProgress(ctx, requests, func(item jira.PrefetchBatchProgress) {
 			if onProgress == nil {
 				return
 			}
@@ -80,7 +80,7 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 			}
 		}
 	} else if prefetcher, ok := c.jira.(jiraStatusPrefetcher); ok {
-		prefetcher.PrefetchStatuses(requests)
+		prefetcher.PrefetchStatuses(ctx, requests)
 	}
 
 	for _, branch := range allBranches {

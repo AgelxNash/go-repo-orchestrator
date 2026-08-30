@@ -34,11 +34,11 @@ type Cleaner struct {
 }
 
 type jiraStatusPrefetcher interface {
-	PrefetchStatuses(requests []jira.StatusBatchRequest)
+	PrefetchStatuses(ctx context.Context, requests []jira.StatusBatchRequest)
 }
 
 type jiraStatusPrefetcherWithProgress interface {
-	PrefetchStatusesWithProgress(requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress
+	PrefetchStatusesWithProgress(ctx context.Context, requests []jira.StatusBatchRequest, onProgress jira.PrefetchProgressCallback) []jira.PrefetchBatchProgress
 }
 
 // RepoLoadProgress описывает прогресс пакетной загрузки Jira-статусов для репозитория.

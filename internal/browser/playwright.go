@@ -286,6 +286,9 @@ func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, h
 	if r == nil {
 		return 0, nil, nil, errors.New("playwright runtime равен nil")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	r.mu.Lock()
 	started := r.started

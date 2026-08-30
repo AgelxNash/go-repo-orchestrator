@@ -483,7 +483,7 @@ func TestPrefetchStatusesBatchesBy500(t *testing.T) {
 		requestsIn = append(requestsIn, StatusBatchRequest{Group: "TASKS", Key: fmt.Sprintf("WEB-%d", i)})
 	}
 
-	svc.PrefetchStatuses(requestsIn)
+	svc.PrefetchStatuses(context.Background(), requestsIn)
 
 	if requests != 2 {
 		t.Fatalf("expected 2 batched requests, got %d", requests)
@@ -534,7 +534,7 @@ func TestPrefetchStatusesSeparatesGroups(t *testing.T) {
 		{Group: "IDEA", URL: ideaServer.URL},
 	}))
 
-	svc.PrefetchStatuses([]StatusBatchRequest{
+	svc.PrefetchStatuses(context.Background(), []StatusBatchRequest{
 		{Group: "TASKS", Key: "OPS-1"},
 		{Group: "IDEA", Key: "IDEA-1"},
 		{Group: "TASKS", Key: "OPS-2"},
@@ -665,7 +665,7 @@ func TestResolveStatusFallbackOn400BadRequest(t *testing.T) {
 		URL:   server.URL,
 	}}))
 
-	svc.PrefetchStatuses([]StatusBatchRequest{
+	svc.PrefetchStatuses(context.Background(), []StatusBatchRequest{
 		{Group: "BFF", Key: "BFF-1"},
 		{Group: "BFF", Key: "BFF-INVALID"},
 		{Group: "BFF", Key: "BFF-2"},
@@ -687,5 +687,47 @@ func TestResolveStatusFallbackOn400BadRequest(t *testing.T) {
 	}
 	if stInv.State != StatusStateError || stInv.Reason != StatusReasonIssueNotFound {
 		t.Fatalf("expected BFF-INVALID IssueNotFound, got State=%v Reason=%v", stInv.State, stInv.Reason)
+	}
+}
+
+func TestPrefetchStatusesWithProgressRespectsContextCancellation(t *testing.T) {
+	block := make(chan struct{})
+	defer close(block)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	groupOption, err := WithGroupConfigs(time.Second, []config.JiraConfig{
+		{Group: "OPS", URL: server.URL},
+	})
+	if err != nil {
+		t.Fatalf("build group configs: %v", err)
+	}
+	svc := NewStatusService(10*time.Second, groupOption)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.PrefetchStatusesWithProgress(ctx, []StatusBatchRequest{{Group: "OPS", Key: "OPS-1"}}, nil)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("prefetch did not respect context cancellation")
+	}
+
+	result := svc.ResolveStatus("OPS", "", server.URL, "OPS-1")
+	if result.State != StatusStateTransient {
+		t.Fatalf("expected transient state after cancellation, got %q", result.State)
+	}
+	if result.Reason != StatusReasonTransportError {
+		t.Fatalf("expected transport error reason after cancellation, got %q", result.Reason)
 	}
 }
