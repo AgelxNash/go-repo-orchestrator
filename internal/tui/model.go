@@ -66,7 +66,7 @@ const (
 // Model хранит состояние TUI в двухпанельном режиме.
 type Model struct {
 	cfg   *config.Config
-	clean *usecase.Cleaner
+	clean cleanerPort
 
 	focus        panelFocus
 	repoIdx      int
@@ -146,7 +146,7 @@ type Model struct {
 }
 
 // NewModel создает корневую модель интерфейса.
-func NewModel(cfg *config.Config, cleaner *usecase.Cleaner, _ bool) Model {
+func NewModel(cfg *config.Config, cleaner cleanerPort, _ bool) Model {
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
 	s.Style = warnStyle

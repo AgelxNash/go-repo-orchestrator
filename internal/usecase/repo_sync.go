@@ -19,51 +19,61 @@ func (c *Cleaner) LoadRepoStat(ctx context.Context, repo config.RepoConfig) (mod
 	if err != nil {
 		return model.RepoStat{}, fmt.Errorf("получить статус репозитория: %w", err)
 	}
-	stat.SyncWarning = syncWarning
+	stat.Warning = syncWarning
+	stat.SyncWarning = syncWarning.Text()
 
 	return stat, nil
 }
 
-func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig) (string, string, error) {
+const repoWarningRemoteSyncFailed = "remote_sync_failed"
+
+func newRemoteSyncWarning(err error) model.RepoWarning {
+	return model.RepoWarning{
+		Code:    repoWarningRemoteSyncFailed,
+		Message: fmt.Sprintf("синхронизация remote не выполнена: %v", err),
+	}
+}
+
+func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig) (string, model.RepoWarning, error) {
 	switch repo.SourceType() {
 	case "url":
 		managedPath, err := c.git.EnsureManagedClone(ctx, repo.Name, repo.URL)
 		if err == nil {
-			return managedPath, "", nil
+			return managedPath, model.RepoWarning{}, nil
 		}
 
 		fallbackPath := c.git.ManagedRepoPath(repo.Name, repo.URL)
 		fallbackCtx := context.WithoutCancel(ctx)
 		if _, fallbackErr := c.git.ResolveRepoPath(fallbackCtx, repo.Name, "", fallbackPath); fallbackErr != nil {
-			return "", "", fmt.Errorf("подготовить репозиторий: %w", err)
+			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
 		}
 
-		return fallbackPath, fmt.Sprintf("синхронизация remote не выполнена: %v", err), nil
+		return fallbackPath, newRemoteSyncWarning(err), nil
 
 	case "opensource":
 		if updateErr := c.git.UpdateOpensourceRepo(ctx, repo.URL, repo.Path, repo.Branch.Autoswitch); updateErr != nil {
 			localPath, fallbackErr := c.git.ResolveRepoPath(ctx, repo.Name, "", repo.Path)
 			if fallbackErr != nil {
-				return "", "", fmt.Errorf("подготовить репозиторий: %w", updateErr)
+				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", updateErr)
 			}
 
-			return localPath, fmt.Sprintf("синхронизация remote не выполнена: %v", updateErr), nil
+			return localPath, newRemoteSyncWarning(updateErr), nil
 		}
 
 		localPath, err := c.git.ResolveRepoPath(ctx, repo.Name, "", repo.Path)
 		if err != nil {
-			return "", "", fmt.Errorf("подготовить репозиторий: %w", err)
+			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
 		}
 
-		return localPath, "", nil
+		return localPath, model.RepoWarning{}, nil
 
 	default:
 		managedPath, err := c.git.ResolveRepoPath(ctx, repo.Name, repo.URL, repo.Path)
 		if err != nil {
-			return "", "", fmt.Errorf("подготовить репозиторий: %w", err)
+			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
 		}
 
-		return managedPath, "", nil
+		return managedPath, model.RepoWarning{}, nil
 	}
 }
 

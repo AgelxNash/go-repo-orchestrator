@@ -30,7 +30,7 @@ func waitRepoLoadJiraProgressCmd(repoName string, startup bool, stream <-chan us
 }
 
 // loadRepoBranchesCmd запускает загрузку веток репозитория и отправляет поэтапные события в лог.
-func loadRepoBranchesCmd(ctx context.Context, cleaner *usecase.Cleaner, repo config.RepoConfig, requestID int, startup bool, actionKey string, actionID int) tea.Cmd {
+func loadRepoBranchesCmd(ctx context.Context, cleaner cleanerPort, repo config.RepoConfig, requestID int, startup bool, actionKey string, actionID int) tea.Cmd {
 	progressStream := make(chan usecase.RepoLoadProgress, 2048)
 	progressCmd := waitRepoLoadJiraProgressCmd(repo.Name, startup, progressStream)
 
@@ -98,14 +98,14 @@ func loadRepoBranchesCmd(ctx context.Context, cleaner *usecase.Cleaner, repo con
 	return tea.Batch(stageGit, progressCmd, loadAndReport)
 }
 
-func loadRepoStatCmd(ctx context.Context, cleaner *usecase.Cleaner, repo config.RepoConfig, startup bool, actionKey string, actionID int) tea.Cmd {
+func loadRepoStatCmd(ctx context.Context, cleaner cleanerPort, repo config.RepoConfig, startup bool, actionKey string, actionID int) tea.Cmd {
 	return func() tea.Msg {
 		stat, err := cleaner.LoadRepoStat(ctx, repo)
 		return repoStatLoadedMsg{actionKey: actionKey, actionID: actionID, repoName: repo.Name, stat: stat, err: err, startup: startup}
 	}
 }
 
-func generateScriptCmd(cleaner *usecase.Cleaner, repo config.RepoConfig, repoPath string, branches []model.BranchInfo, format model.ScriptFormat) tea.Cmd {
+func generateScriptCmd(cleaner cleanerPort, repo config.RepoConfig, repoPath string, branches []model.BranchInfo, format model.ScriptFormat) tea.Cmd {
 	return func() tea.Msg {
 		result, err := cleaner.GenerateDeleteScript(repo, repoPath, branches, format)
 		return scriptGeneratedMsg{result: result, err: err}
