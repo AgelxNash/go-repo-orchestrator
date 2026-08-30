@@ -539,3 +539,158 @@ func TestValidateRepoRootRespectsCanceledContext(t *testing.T) {
 		t.Fatalf("expected context canceled error, got: %v", err)
 	}
 }
+
+func TestManagedRepoPathDeterministic(t *testing.T) {
+	t.Parallel()
+
+	c := NewClient(time.Second, t.TempDir())
+	a := c.ManagedRepoPath("demo", "https://github.com/AgelxNash/go-repo-orchestrator.git")
+	b := c.ManagedRepoPath("demo", "https://github.com/AgelxNash/go-repo-orchestrator.git")
+	if a == "" || a != b {
+		t.Fatalf("expected stable non-empty path, got %q vs %q", a, b)
+	}
+}
+
+func TestManagedRepoPathDifferentURLsDifferentKeys(t *testing.T) {
+	t.Parallel()
+
+	c := NewClient(time.Second, t.TempDir())
+	a := c.ManagedRepoPath("demo", "https://github.com/owner/repo-A.git")
+	b := c.ManagedRepoPath("demo", "https://github.com/owner/repo-B.git")
+	if a == b {
+		t.Fatalf("expected different keys for different urls, got %q", a)
+	}
+}
+
+func TestManagedRepoPathEmptyNameFallback(t *testing.T) {
+	t.Parallel()
+
+	c := NewClient(time.Second, t.TempDir())
+	got := c.ManagedRepoPath("   ", "https://github.com/owner/repo.git")
+	if got == "" {
+		t.Fatal("expected non-empty fallback path")
+	}
+}
+
+func TestResolveRepoPathPathSourceResolvesAbsolute(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "src")
+	runCmd(t, dir, "git", "init", repoPath)
+
+	c := NewClient(time.Second, dir)
+	got, err := c.ResolveRepoPath(context.Background(), "name", "", repoPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	absWant, _ := filepath.Abs(repoPath)
+	if got != absWant {
+		t.Fatalf("expected absolute %q, got %q", absWant, got)
+	}
+}
+
+func TestResolveRepoPathRequiresURLOrPath(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	c := NewClient(time.Second, t.TempDir())
+	if _, err := c.ResolveRepoPath(context.Background(), "name", "", ""); err == nil {
+		t.Fatal("expected error for empty url and path")
+	}
+}
+
+func TestCurrentBranchAndDirtyStats(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	runCmd(t, dir, "git", "init", repo)
+	runCmd(t, repo, "git", "config", "user.email", "test@example.com")
+	runCmd(t, repo, "git", "config", "user.name", "tester")
+	runCmd(t, repo, "git", "config", "commit.gpgsign", "false")
+	runCmd(t, repo, "git", "checkout", "-b", "feature/test")
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runCmd(t, repo, "git", "add", "README.md")
+	runCmd(t, repo, "git", "commit", "-m", "init")
+	// Untracked файл появляется после коммита — git status --porcelain
+	// покажет его как ??, что увидит наш `GetDirtyStats`.
+	writeFile(t, filepath.Join(repo, "UNTRACKED.md"), "u\n")
+
+	c := NewClient(time.Second, dir)
+	branch, err := c.CurrentBranch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	if branch != "feature/test" {
+		t.Fatalf("expected feature/test, got %q", branch)
+	}
+
+	stats, err := c.GetDirtyStats(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("dirty stats: %v", err)
+	}
+	if len(stats.Untracked) != 1 {
+		t.Fatalf("expected 1 untracked file, got %+v", stats)
+	}
+}
+
+func TestListBranchesLocalAndRemote(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	runCmd(t, dir, "git", "init", repo)
+	runCmd(t, repo, "git", "config", "user.email", "test@example.com")
+	runCmd(t, repo, "git", "config", "user.name", "tester")
+	runCmd(t, repo, "git", "config", "commit.gpgsign", "false")
+	runCmd(t, repo, "git", "checkout", "-b", "feature/local")
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	runCmd(t, repo, "git", "add", "a.txt")
+	runCmd(t, repo, "git", "commit", "-m", "a")
+	runCmd(t, repo, "git", "checkout", "-b", "feature/remote")
+	runCmd(t, repo, "git", "checkout", "feature/local")
+	// create remote via local bare clone
+	bare := filepath.Join(dir, "bare.git")
+	runCmd(t, dir, "git", "clone", "--bare", repo, bare)
+	runCmd(t, repo, "git", "remote", "add", "origin", bare)
+	runCmd(t, repo, "git", "push", "-u", "origin", "feature/local")
+	runCmd(t, repo, "git", "push", "origin", "feature/remote")
+
+	c := NewClient(time.Second, dir)
+	branches, err := c.ListBranches(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("list branches: %v", err)
+	}
+
+	var hasLocalFeature, hasRemoteFeature bool
+	for _, b := range branches {
+		if b.Name == "feature/local" && b.Scope == model.BranchScopeLocal {
+			hasLocalFeature = true
+		}
+		if strings.HasPrefix(b.QualifiedName, "origin/feature/") {
+			hasRemoteFeature = true
+		}
+	}
+	if !hasLocalFeature {
+		t.Fatalf("expected local feature/local in %+v", branches)
+	}
+	if !hasRemoteFeature {
+		t.Fatalf("expected remote-tracking branches in %+v", branches)
+	}
+}
