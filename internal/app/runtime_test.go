@@ -11,7 +11,10 @@ import (
 func TestNewRuntimeUsesStateDirForPlaywrightDriver(t *testing.T) {
 	t.Parallel()
 
-	runtime := NewRuntime("/var/lib/gbc-state", "/var/lib/gbc-state/workspace", time.Second, "", nil, zap.NewNop())
+	runtime, err := NewRuntime("/var/lib/gbc-state", "/var/lib/gbc-state/workspace", time.Second, "", nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if runtime == nil || runtime.Playwright == nil {
 		t.Fatal("runtime playwright is required")
 	}

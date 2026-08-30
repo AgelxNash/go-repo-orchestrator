@@ -45,6 +45,19 @@ func (f fakeHTTPDoer) Do(req *http.Request) (*http.Response, error) {
 	return nil, errors.New("doFn is not configured")
 }
 
+// mustGroupConfigs оборачивает WithGroupConfigs для тестов: ssl-блоки в тестовых
+// конфигурациях не задаются, поэтому ошибка здесь невозможна.
+func mustGroupConfigs(t *testing.T, groups []config.JiraConfig) StatusServiceOption {
+	t.Helper()
+
+	opt, err := WithGroupConfigs(0, groups)
+	if err != nil {
+		t.Fatalf("WithGroupConfigs: %v", err)
+	}
+
+	return opt
+}
+
 func TestParseSearchStatuses(t *testing.T) {
 	t.Parallel()
 
@@ -95,7 +108,7 @@ func TestResolveStatusUsesHTTPTransportAndCache(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 		Type:  "token",
@@ -123,7 +136,7 @@ func TestResolveStatusUsesHTTPTransportAndCache(t *testing.T) {
 func TestResolveStatusReturnsDashForUnknownGroup(t *testing.T) {
 	t.Parallel()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   "https://jira.example.com",
 	}}))
@@ -141,7 +154,7 @@ func TestResolveStatusUsesBrowserTransportForPlaywrightGroup(t *testing.T) {
 	t.Parallel()
 
 	called := 0
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group:      "IDEA",
 		URL:        "https://idea.example.org",
 		Playwright: true,
@@ -188,7 +201,7 @@ func TestResolveStatusFallsBackToHTTPWhenBrowserUnavailable(t *testing.T) {
 	defer server.Close()
 
 	called := 0
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group:      "IDEA",
 		URL:        server.URL,
 		Playwright: true,
@@ -221,7 +234,7 @@ func TestResolveStatusFallbackToHTTPAuthRequired(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group:      "IDEA",
 		URL:        server.URL,
 		Playwright: true,
@@ -242,7 +255,7 @@ func TestResolveStatusFallbackToHTTPAuthRequired(t *testing.T) {
 func TestResolveStatusFallbackToHTTPNetworkError(t *testing.T) {
 	t.Parallel()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group:      "IDEA",
 		URL:        "https://jira.example.com",
 		Playwright: true,
@@ -271,7 +284,7 @@ func TestResolveStatusFallbackDashOnError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -301,7 +314,7 @@ func TestResolveStatusTransient429RecoversAfterRetryTTL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -356,7 +369,7 @@ func TestResolveStatusMapsNonTransientHTTPErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -378,7 +391,7 @@ func TestResolveStatusMapsForbiddenAsAuthState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -400,7 +413,7 @@ func TestResolveStatusMapsClient4xxErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -428,7 +441,7 @@ func TestResolveStatusMapsLoginRedirectOrHTMLAsAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -460,7 +473,7 @@ func TestPrefetchStatusesBatchesBy500(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -516,7 +529,7 @@ func TestPrefetchStatusesSeparatesGroups(t *testing.T) {
 	}))
 	defer ideaServer.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{
 		{Group: "TASKS", URL: tasksServer.URL},
 		{Group: "IDEA", URL: ideaServer.URL},
 	}))
@@ -551,7 +564,7 @@ func TestResolveStatusFallsBackWhenIssueMissingInBatchResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "TASKS",
 		URL:   server.URL,
 	}}))
@@ -647,7 +660,7 @@ func TestResolveStatusFallbackOn400BadRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{
 		Group: "BFF",
 		URL:   server.URL,
 	}}))

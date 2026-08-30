@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/browser"
@@ -19,8 +20,11 @@ type Runtime struct {
 	Playwright *browser.PlaywrightRuntime
 }
 
+// jiraHTTPTimeout — таймаут HTTP-запросов к Jira (общий и per-group mTLS-клиенты).
+const jiraHTTPTimeout = 5 * time.Second
+
 // NewRuntime собирает зависимости use case слоя.
-func NewRuntime(stateDir, workspaceDir string, gitTimeout time.Duration, browserCDPURL string, jiraGroups []config.JiraConfig, logger *zap.Logger) *Runtime {
+func NewRuntime(stateDir, workspaceDir string, gitTimeout time.Duration, browserCDPURL string, jiraGroups []config.JiraConfig, logger *zap.Logger) (*Runtime, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -31,9 +35,13 @@ func NewRuntime(stateDir, workspaceDir string, gitTimeout time.Duration, browser
 		browser.WithStateDir(stateDir),
 		browser.WithLogger(logger),
 	)
+	groupConfigs, err := jira.WithGroupConfigs(jiraHTTPTimeout, jiraGroups)
+	if err != nil {
+		return nil, fmt.Errorf("настроить jira-подключения: %w", err)
+	}
 	statusService := jira.NewStatusService(
-		5*time.Second,
-		jira.WithGroupConfigs(jiraGroups),
+		jiraHTTPTimeout,
+		groupConfigs,
 		jira.WithBrowserRuntime(playwrightRuntime),
 		jira.WithLogger(logger),
 	)
@@ -48,7 +56,7 @@ func NewRuntime(stateDir, workspaceDir string, gitTimeout time.Duration, browser
 		Git:        gitClient,
 		Cleaner:    cleaner,
 		Playwright: playwrightRuntime,
-	}
+	}, nil
 }
 
 func (r *Runtime) StartPlaywright() error {
@@ -68,7 +76,7 @@ func (r *Runtime) Close() error {
 }
 
 // NewRuntimeFromOptions собирает runtime с безопасными значениями по умолчанию.
-func NewRuntimeFromOptions(opts RuntimeOptions) *Runtime {
+func NewRuntimeFromOptions(opts RuntimeOptions) (*Runtime, error) {
 	if opts.StateDir == "" {
 		opts.StateDir = DefaultStateDir()
 	}

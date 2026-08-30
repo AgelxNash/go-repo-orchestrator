@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -62,12 +63,67 @@ type JiraConfig struct {
 	Type       string    `yaml:"type" mapstructure:"type"`
 	Login      JiraLogin `yaml:"login" mapstructure:"login"`
 	Token      string    `yaml:"token" mapstructure:"token"`
+	SSL        JiraSSL   `yaml:"ssl" mapstructure:"ssl"`
 }
 
 // JiraLogin хранит учетные данные для базовой аутентификации в Jira.
 type JiraLogin struct {
 	Username string `yaml:"username" mapstructure:"username"`
 	Password string `yaml:"password" mapstructure:"password"`
+}
+
+// JiraSSL настраивает TLS-подключение к Jira-группе: клиентские сертификаты
+// (mTLS), доверенный CA и режим верификации.
+type JiraSSL struct {
+	ClientCert        string `yaml:"client_cert" mapstructure:"client_cert"`
+	ClientKey         string `yaml:"client_key" mapstructure:"client_key"`
+	ClientKeyPassword string `yaml:"client_key_password" mapstructure:"client_key_password"`
+	CACert            string `yaml:"ca_cert" mapstructure:"ca_cert"`
+	// Verify: nil или true — верифицировать серверный сертификат (по умолчанию);
+	// false — отключить проверку цепочки (только для тестовых сред).
+	Verify *bool `yaml:"verify" mapstructure:"verify"`
+}
+
+// IsZero reports whether no TLS option is set.
+func (s JiraSSL) IsZero() bool {
+	return s.ClientCert == "" &&
+		s.ClientKey == "" &&
+		s.ClientKeyPassword == "" &&
+		s.CACert == "" &&
+		s.Verify == nil
+}
+
+// validateJiraSSL проверяет сочетания полей ssl-блока и существование файлов.
+func validateJiraSSL(index int, ssl JiraSSL) error {
+	if ssl.IsZero() {
+		return nil
+	}
+
+	switch {
+	case ssl.ClientKey != "" && ssl.ClientCert == "":
+		return fmt.Errorf("jira[%d].ssl.client_key: задаётся только вместе с client_cert", index)
+	case ssl.ClientKeyPassword != "" && ssl.ClientCert == "":
+		return fmt.Errorf("jira[%d].ssl.client_key_password: задаётся только вместе с client_cert", index)
+	}
+
+	if ssl.Verify != nil && !*ssl.Verify && ssl.CACert != "" {
+		return fmt.Errorf("jira[%d].ssl: verify: false и ca_cert взаимоисключаются: укажите ca_cert для корпоративного CA либо отключите verify только в тестовых средах", index)
+	}
+
+	for field, path := range map[string]string{
+		"client_cert": ssl.ClientCert,
+		"client_key":  ssl.ClientKey,
+		"ca_cert":     ssl.CACert,
+	} {
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("jira[%d].ssl.%s: недоступен файл %q: %w", index, field, path, err)
+		}
+	}
+
+	return nil
 }
 
 // JiraMatch содержит результат успешного сопоставления ветки с тикетом в Jira.
@@ -137,6 +193,9 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 		jira.URL = normalizeJiraBaseURL(jira.URL)
 		if err := validateJiraURL(jira.URL); err != nil {
 			return nil, fmt.Errorf("jira[%d].url: %w", i, err)
+		}
+		if err := validateJiraSSL(i, jira.SSL); err != nil {
+			return nil, err
 		}
 		if jira.Group == "" {
 			continue

@@ -67,9 +67,10 @@ type groupAuth struct {
 }
 
 type groupSettings struct {
-	baseURL   string
-	transport groupTransport
-	auth      groupAuth
+	baseURL    string
+	transport  groupTransport
+	auth       groupAuth
+	httpClient httpDoer // per-group клиент (mTLS/CA); nil — использовать общий
 }
 
 type StatusService struct {
@@ -112,8 +113,8 @@ func NewStatusService(timeout time.Duration, opts ...StatusServiceOption) *Statu
 	return svc
 }
 
-func WithGroupConfigs(groups []config.JiraConfig) StatusServiceOption {
-	return func(s *StatusService) {
+func WithGroupConfigs(timeout time.Duration, groups []config.JiraConfig) (StatusServiceOption, error) {
+	option := func(s *StatusService) {
 		if s == nil {
 			return
 		}
@@ -148,6 +149,39 @@ func WithGroupConfigs(groups []config.JiraConfig) StatusServiceOption {
 
 		s.groups = next
 	}
+
+	// Fail fast: сертификаты mTLS-групп проверяются и загружаются один раз при старте.
+	perGroup := make(map[string]httpDoer, len(groups))
+	for _, group := range groups {
+		name := strings.TrimSpace(group.Group)
+		if name == "" || group.SSL.IsZero() {
+			continue
+		}
+		client, err := buildGroupHTTPClient(timeout, group.SSL)
+		if err != nil {
+			return nil, fmt.Errorf("jira-группа %q: %w", name, err)
+		}
+		if client != nil {
+			perGroup[name] = client
+		}
+	}
+	if len(perGroup) > 0 {
+		inner := option
+		option = func(s *StatusService) {
+			inner(s)
+			if s == nil {
+				return
+			}
+			for name, client := range perGroup {
+				if gs, ok := s.groups[name]; ok {
+					gs.httpClient = client
+					s.groups[name] = gs
+				}
+			}
+		}
+	}
+
+	return option, nil
 }
 
 func WithBrowserRuntime(runtime *browser.PlaywrightRuntime) StatusServiceOption {
@@ -536,14 +570,14 @@ func (s *StatusService) resolveSearchWithContext(ctx context.Context, group stri
 
 		s.logBrowserFallback(group, browserErr)
 
-		httpResponse, err := s.resolveStatusViaHTTP(ctx, requestURL, headers)
+		httpResponse, err := s.resolveStatusViaHTTP(ctx, group, requestURL, headers)
 		if err != nil {
 			return searchStatusResponse{}, true, err
 		}
 		return httpResponse, true, nil
 	}
 
-	httpResponse, err := s.resolveStatusViaHTTP(ctx, requestURL, headers)
+	httpResponse, err := s.resolveStatusViaHTTP(ctx, group, requestURL, headers)
 	if err != nil {
 		return searchStatusResponse{}, false, err
 	}
@@ -551,7 +585,15 @@ func (s *StatusService) resolveSearchWithContext(ctx context.Context, group stri
 	return httpResponse, false, nil
 }
 
-func (s *StatusService) resolveStatusViaHTTP(ctx context.Context, requestURL string, headers map[string]string) (searchStatusResponse, error) {
+// groupHTTPClient возвращает http-клиент группы (mTLS/CA) или общий клиент сервиса.
+func (s *StatusService) groupHTTPClient(group string) httpDoer {
+	if gs, ok := s.groups[group]; ok && gs.httpClient != nil {
+		return gs.httpClient
+	}
+	return s.httpClient
+}
+
+func (s *StatusService) resolveStatusViaHTTP(ctx context.Context, group string, requestURL string, headers map[string]string) (searchStatusResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return searchStatusResponse{}, fmt.Errorf("собрать jira-запрос: %w", err)
@@ -561,7 +603,7 @@ func (s *StatusService) resolveStatusViaHTTP(ctx context.Context, requestURL str
 		req.Header.Set(key, value)
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.groupHTTPClient(group).Do(req)
 	if err != nil {
 		return searchStatusResponse{}, fmt.Errorf("ошибка http-запроса jira: %w", err)
 	}

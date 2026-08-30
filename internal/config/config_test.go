@@ -242,6 +242,148 @@ func TestPlaywrightEnabled(t *testing.T) {
 	}
 }
 
+func writeTestConfig(t *testing.T, raw string) string {
+	t.Helper()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	return configPath
+}
+
+func TestLoadParsesJiraSSLBlock(t *testing.T) {
+	t.Parallel()
+
+	certPath := filepath.Join(t.TempDir(), "client.pem")
+	if err := os.WriteFile(certPath, []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := "jira:\n" +
+		"  - group: MYPROJ\n" +
+		"    url: https://jira.corp.local\n" +
+		"    ssl:\n" +
+		"      client_cert: " + certPath + "\n" +
+		"      ca_cert: " + caPath + "\n" +
+		"repos:\n" +
+		"  - name: demo\n" +
+		"    path: ./tmp/repo\n"
+
+	cfg, err := Load(writeTestConfig(t, raw))
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	ssl := cfg.Jira[0].SSL
+	if ssl.ClientCert != certPath || ssl.CACert != caPath {
+		t.Fatalf("expected ssl paths to be parsed, got %+v", ssl)
+	}
+	if !ssl.IsZero() && ssl.ClientKey != "" {
+		t.Fatalf("client_key must stay empty, got %q", ssl.ClientKey)
+	}
+}
+
+func TestLoadFailsOnJiraSSLKeyWithoutCert(t *testing.T) {
+	t.Parallel()
+
+	keyPath := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(keyPath, []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := "jira:\n" +
+		"  - group: MYPROJ\n" +
+		"    url: https://jira.corp.local\n" +
+		"    ssl:\n" +
+		"      client_key: " + keyPath + "\n" +
+		"repos:\n" +
+		"  - name: demo\n" +
+		"    path: ./tmp/repo\n"
+
+	_, err := Load(writeTestConfig(t, raw))
+	if err == nil {
+		t.Fatal("expected client_key without client_cert validation error")
+	}
+	if !strings.Contains(err.Error(), "client_key") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFailsOnJiraSSLPasswordWithoutCert(t *testing.T) {
+	t.Parallel()
+
+	raw := "jira:\n" +
+		"  - group: MYPROJ\n" +
+		"    url: https://jira.corp.local\n" +
+		"    ssl:\n" +
+		"      client_key_password: secret\n" +
+		"repos:\n" +
+		"  - name: demo\n" +
+		"    path: ./tmp/repo\n"
+
+	_, err := Load(writeTestConfig(t, raw))
+	if err == nil {
+		t.Fatal("expected client_key_password without client_cert validation error")
+	}
+	if !strings.Contains(err.Error(), "client_key_password") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFailsOnJiraSSLVerifyFalseWithCACert(t *testing.T) {
+	t.Parallel()
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := "jira:\n" +
+		"  - group: MYPROJ\n" +
+		"    url: https://jira.corp.local\n" +
+		"    ssl:\n" +
+		"      ca_cert: " + caPath + "\n" +
+		"      verify: false\n" +
+		"repos:\n" +
+		"  - name: demo\n" +
+		"    path: ./tmp/repo\n"
+
+	_, err := Load(writeTestConfig(t, raw))
+	if err == nil {
+		t.Fatal("expected verify=false with ca_cert validation error")
+	}
+	if !strings.Contains(err.Error(), "взаимоисключаются") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFailsOnJiraSSLMissingCertFile(t *testing.T) {
+	t.Parallel()
+
+	raw := "jira:\n" +
+		"  - group: MYPROJ\n" +
+		"    url: https://jira.corp.local\n" +
+		"    ssl:\n" +
+		"      client_cert: /nonexistent/path/client.pem\n" +
+		"repos:\n" +
+		"  - name: demo\n" +
+		"    path: ./tmp/repo\n"
+
+	_, err := Load(writeTestConfig(t, raw))
+	if err == nil {
+		t.Fatal("expected missing ssl file validation error")
+	}
+	if !strings.Contains(err.Error(), "client_cert") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadParsesBrowserCDPURL(t *testing.T) {
 	t.Parallel()
 

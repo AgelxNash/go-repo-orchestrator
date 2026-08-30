@@ -27,7 +27,7 @@ func TestListReleasedFixVersionsReturnsSortedReleasedOnly(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	versions, err := svc.ListReleasedFixVersions(t.Context(), "TASKS")
 	if err != nil {
@@ -70,7 +70,7 @@ func TestListDoneIssueKeysByReleaseBuildsJQLAndPaginates(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	keys, err := svc.ListDoneIssueKeysByRelease(t.Context(), "TASKS", "42")
 	if err != nil {
@@ -93,7 +93,7 @@ func TestListReleasedFixVersionsParsesNumericIDWithoutScientificNotation(t *test
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	versions, err := svc.ListReleasedFixVersions(t.Context(), "TASKS")
 	if err != nil {
@@ -113,7 +113,7 @@ func TestListReleasedFixVersionsParsesNumericIDWithoutScientificNotation(t *test
 func TestListDoneIssueKeysByReleaseSafeNoopForUnknownGroup(t *testing.T) {
 	t.Parallel()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: "https://jira.example.org"}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: "https://jira.example.org"}}))
 
 	keys, err := svc.ListDoneIssueKeysByRelease(t.Context(), "UNKNOWN", "101")
 	if err != nil {
@@ -166,7 +166,7 @@ func TestListReleasedFixVersionsRetriesOn429AndHonorsRetryAfter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	versions, err := svc.ListReleasedFixVersions(t.Context(), "TASKS")
 	if err != nil {
@@ -203,7 +203,7 @@ func TestListDoneIssueKeysByReleaseReturnsErrorAfter429RetriesExhausted(t *testi
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	_, err := svc.ListDoneIssueKeysByRelease(t.Context(), "TASKS", "42")
 	if err == nil {
@@ -238,7 +238,7 @@ func TestListDoneIssueKeysByReleaseCancelsDuringRetryWait(t *testing.T) {
 		return waitCtx.Err()
 	}
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	_, err := svc.ListDoneIssueKeysByRelease(ctx, "TASKS", "42")
 	if err == nil {
@@ -269,7 +269,7 @@ func TestListReleasedFixVersionsStopsPaginationOnCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewStatusService(0, WithGroupConfigs([]config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
 
 	_, err := svc.ListReleasedFixVersions(ctx, "TASKS")
 	if err == nil {
