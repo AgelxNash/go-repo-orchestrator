@@ -13,6 +13,7 @@
 - CI: расширенный набор `golangci-lint` (`gosec`, `errorlint`, `bodyclose`, `copyloopvar`, `misspell`, `nolintlint`, `revive`).
 - Модель `RepoWarning{Code, Message}` для non-fatal предупреждений репозитория.
 - ADR-каталог с ретроспективной фиксацией ключевых архитектурных решений.
+- `config.schema.json` для editor-autocomplete и ранней проверки структуры `config.yaml`.
 
 ### Changed
 

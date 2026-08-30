@@ -176,10 +176,25 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 	if v == nil {
 		return nil, errors.New("требуется экземпляр viper")
 	}
+	if err := validateConfigFileKeys(v); err != nil {
+		return nil, err
+	}
 
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
+	var raw struct {
+		Jira       []JiraConfig  `mapstructure:"jira"`
+		Browser    BrowserConfig `mapstructure:"browser"`
+		Repos      []RepoConfig  `mapstructure:"repos"`
+		ConfigPath string        `mapstructure:"config"`
+		StateDir   string        `mapstructure:"state_dir"`
+	}
+	if err := v.UnmarshalExact(&raw); err != nil {
 		return nil, fmt.Errorf("ошибка структуры YAML: проверьте отступы и правильность ключей (%w)", err)
+	}
+
+	cfg := Config{
+		Jira:    raw.Jira,
+		Browser: raw.Browser,
+		Repos:   raw.Repos,
 	}
 
 	if len(cfg.Repos) == 0 {
@@ -270,6 +285,33 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func validateConfigFileKeys(v *viper.Viper) error {
+	allowed := map[string]bool{
+		"browser":   true,
+		"jira":      true,
+		"repos":     true,
+		"state_dir": true,
+	}
+
+	var unknown []string
+	for _, key := range v.AllKeys() {
+		root, _, _ := strings.Cut(key, ".")
+		if allowed[root] {
+			continue
+		}
+		if !v.InConfig(key) {
+			continue
+		}
+		unknown = append(unknown, key)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+
+	slices.Sort(unknown)
+	return fmt.Errorf("ошибка структуры YAML: неизвестные ключи конфигурации: %s", strings.Join(unknown, ", "))
 }
 
 type repoIdentityRef struct {

@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/AgelxNash/go-repo-orchestrator/main/config.schema.json",
+  "title": "go-repo-orchestrator config",
+  "description": "YAML-конфигурация go-repo-orchestrator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repos"],
+  "properties": {
+    "state_dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Каталог состояния приложения и управляемого workspace. Эквивалент CLI-флага --state-dir / ENV GBC_STATE_DIR."
+    },
+    "browser": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cdp_url": {
+          "type": "string",
+          "description": "CDP URL уже запущенного Chromium для Jira-групп с playwright: true.",
+          "pattern": "^(https?|wss?)://[^\\s]+$"
+        }
+      }
+    },
+    "jira": {
+      "type": "array",
+      "description": "Настройки Jira-инстансов.",
+      "items": { "$ref": "#/$defs/jiraConfig" }
+    },
+    "repos": {
+      "type": "array",
+      "description": "Список репозиториев для отображения в TUI.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/repoConfig" }
+    }
+  },
+  "$defs": {
+    "repoConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "anyOf": [
+        { "required": ["url"] },
+        { "required": ["path"] }
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Уникальное имя репозитория в TUI."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git URL: https://, ssh:// или SCP-like git@host:path.git."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Локальный путь репозитория. Может использоваться отдельно или вместе с url для opensource-сценария."
+        },
+        "branch": { "$ref": "#/$defs/branchConfig" }
+      }
+    },
+    "branchConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "autoswitch": {
+          "type": "string",
+          "description": "Ветка, на которую можно быстро переключиться из TUI."
+        },
+        "keep": {
+          "type": "array",
+          "description": "Regex-правила защищённых веток.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "jira": {
+          "type": "array",
+          "description": "Regex-правила извлечения Jira key из имени ветки.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "autocheck": {
+          "type": "array",
+          "description": "Regex-правила автопометки кандидатов на удаление.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "jiraConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "string",
+          "description": "Идентификатор Jira-группы для named capture group в branch.jira."
+        },
+        "url": {
+          "type": "string",
+          "description": "Базовый HTTPS URL Jira.",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "playwright": {
+          "type": "boolean",
+          "description": "Включает browser transport через Playwright/CDP."
+        },
+        "type": {
+          "type": "string",
+          "description": "Вспомогательное поле для человека; runtime-логика его не использует."
+        },
+        "login": { "$ref": "#/$defs/jiraLogin" },
+        "token": {
+          "type": "string",
+          "description": "Bearer token/PAT для HTTP transport."
+        },
+        "ssl": { "$ref": "#/$defs/jiraSSL" }
+      }
+    },
+    "jiraLogin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" }
+      }
+    },
+    "jiraSSL": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "client_cert": {
+          "type": "string",
+          "description": "Путь к combined PEM или клиентскому сертификату."
+        },
+        "client_key": {
+          "type": "string",
+          "description": "Путь к отдельному private key, если он не находится в client_cert."
+        },
+        "client_key_password": {
+          "type": "string",
+          "description": "Пароль зашифрованного PEM-ключа."
+        },
+        "ca_cert": {
+          "type": "string",
+          "description": "Путь к корпоративному CA certificate."
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "false отключает TLS verification только для тестовых сред."
+        }
+      }
+    }
+  }
+}

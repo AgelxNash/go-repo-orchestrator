@@ -130,7 +130,7 @@ repos:
     url: git@github.com:mariadb-corporation/MaxScale.git
     path: ./example/mariadb/max-scale
     branch:
-      autoswitch: 24.02
+      autoswitch: "24.02"
       keep:
         - '^(2[2-4]}\.\d{2})$'
       jira:

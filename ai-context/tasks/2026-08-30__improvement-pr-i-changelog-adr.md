@@ -1,6 +1,6 @@
 # PR-I: CHANGELOG + ADR
 
-- **Статус:** InProgress
+- **Статус:** Done (PR #45 merged 2026-08-30; `make check`, local markdown link sanity зелёные)
 - **Трек:** DX/документация (1/2)
 - **Источник:** план улучшений, одобрен владельцем 2026-08-30.
 

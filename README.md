@@ -234,6 +234,7 @@ jira:
     token: "..."
 repos:
   - name: "My Service"
+    path: ./services/my-service
     branch:
       jira:
         - '(?P<SIMPLEWINE>SW-\d+)'  # Ключ "SW-123" найдет группу SIMPLEWINE
@@ -248,6 +249,7 @@ jira:
     url: "https://proj-b.atlassian.net"
 repos:
   - name: "Shared Lib"
+    path: ./libs/shared
     branch:
       jira:
         - '(?P<JIRA>[A-Z]+-\d+)'  # Ключ "PROJ-123" проверит обе группы
@@ -263,6 +265,8 @@ repos:
 Эти параметры требуют ручной настройки под конкретную организацию и workflow.
 
 *Можно переопределять конфигурацию через переменные окружения с префиксом `GBC_` (например, `GBC_STATE_DIR`).*
+
+Для editor-autocomplete и ранней проверки структуры используйте JSON Schema: [`config.schema.json`](config.schema.json). Runtime-загрузчик также работает в strict-режиме: неизвестные YAML-ключи считаются ошибкой конфигурации, чтобы опечатки не игнорировались молча.
 
 ### Авторизация Jira
 
