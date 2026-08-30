@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,13 +10,16 @@ import (
 	"go.uber.org/zap"
 )
 
-func (s *StatusService) PrefetchStatuses(requests []StatusBatchRequest) {
-	_ = s.PrefetchStatusesWithProgress(requests, nil)
+func (s *StatusService) PrefetchStatuses(ctx context.Context, requests []StatusBatchRequest) {
+	_ = s.PrefetchStatusesWithProgress(ctx, requests, nil)
 }
 
-func (s *StatusService) PrefetchStatusesWithProgress(requests []StatusBatchRequest, onProgress PrefetchProgressCallback) []PrefetchBatchProgress {
+func (s *StatusService) PrefetchStatusesWithProgress(ctx context.Context, requests []StatusBatchRequest, onProgress PrefetchProgressCallback) []PrefetchBatchProgress {
 	if s == nil || len(requests) == 0 {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	s.fetchMu.Lock()
@@ -71,7 +75,7 @@ func (s *StatusService) PrefetchStatusesWithProgress(requests []StatusBatchReque
 		for start := 0; start < len(bucketRequests); start += jiraSearchBatchSize {
 			end := min(start+jiraSearchBatchSize, len(bucketRequests))
 			batch := bucketRequests[start:end]
-			s.fetchAndStoreBatch(batch)
+			s.fetchAndStoreBatch(ctx, batch)
 
 			batchIndex++
 			processed += len(batch)
@@ -161,7 +165,7 @@ func (s *StatusService) prepareStatusRequest(req StatusBatchRequest) (preparedSt
 	}, nil, true
 }
 
-func (s *StatusService) fetchAndStoreBatch(batch []preparedStatusRequest) {
+func (s *StatusService) fetchAndStoreBatch(ctx context.Context, batch []preparedStatusRequest) {
 	if len(batch) == 0 {
 		return
 	}
@@ -188,7 +192,7 @@ func (s *StatusService) fetchAndStoreBatch(batch []preparedStatusRequest) {
 			zap.Int("startAt", startAt),
 		)
 
-		response, usedBrowserFallback, requestErr := s.resolveSearch(batch[0].group, batch[0].transport, searchURL, batch[0].headers)
+		response, usedBrowserFallback, requestErr := s.resolveSearchWithContext(ctx, batch[0].group, batch[0].transport, searchURL, batch[0].headers)
 		if usedBrowserFallback {
 			usedBrowserOverall = true
 		}

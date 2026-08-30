@@ -26,10 +26,6 @@ type browserSearchResponse struct {
 	location    string
 }
 
-func (s *StatusService) resolveSearch(group string, transport groupTransport, requestURL string, headers map[string]string) (searchStatusResponse, bool, error) {
-	return s.resolveSearchWithContext(context.Background(), group, transport, requestURL, headers)
-}
-
 func (s *StatusService) resolveSearchWithContext(ctx context.Context, group string, transport groupTransport, requestURL string, headers map[string]string) (searchStatusResponse, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()

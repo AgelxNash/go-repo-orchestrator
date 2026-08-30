@@ -207,7 +207,7 @@ func (s *StatusService) ResolveStatus(group, ticketURL, jiraBaseURL, key string)
 		JiraBaseURL: jiraBaseURL,
 		Key:         key,
 	}
-	s.PrefetchStatuses([]StatusBatchRequest{req})
+	s.PrefetchStatuses(context.Background(), []StatusBatchRequest{req})
 
 	cacheKey, cacheErr := s.cacheKeyForRequest(req)
 	if cacheErr != nil {
