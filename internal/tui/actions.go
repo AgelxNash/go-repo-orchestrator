@@ -256,7 +256,7 @@ func (m *Model) beginAction(actionKey string) (context.Context, int) {
 
 	m.actionSeq++
 	actionID := m.actionSeq
-	ctx, cancel := context.WithCancel(m.appCtx)
+	ctx, cancel := context.WithCancel(m.appCtx) //nolint:gosec // cancel управляется через m.actionCancels: вызывается в finishAction и при повторном beginAction
 	m.actionCancels[actionKey] = actionCancelRef{id: actionID, cancel: cancel}
 	return ctx, actionID
 }

@@ -73,8 +73,8 @@ func TestGoModTidy(t *testing.T) {
 
 	// Restore originals regardless of outcome.
 	t.Cleanup(func() {
-		_ = os.WriteFile(goModPath, originalGoMod, 0o644)
-		_ = os.WriteFile(goSumPath, originalGoSum, 0o644)
+		_ = os.WriteFile(goModPath, originalGoMod, 0o644) //nolint:gosec // восстановление собственного go.mod, путь вычислен от корня модуля
+		_ = os.WriteFile(goSumPath, originalGoSum, 0o644) //nolint:gosec // восстановление собственного go.sum, путь вычислен от корня модуля
 	})
 
 	if !bytes.Equal(originalGoMod, newGoMod) {

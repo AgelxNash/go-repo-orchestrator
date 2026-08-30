@@ -22,7 +22,8 @@ func buildGroupHTTPClient(timeout time.Duration, ssl config.JiraSSL) (*http.Clie
 	tlsConf := &tls.Config{}
 
 	if ssl.Verify != nil && !*ssl.Verify {
-		tlsConf.InsecureSkipVerify = true //nolint:gosec // явный opt-out из конфигурации для тестовых сред
+		// явный opt-out из конфигурации для тестовых сред
+		tlsConf.InsecureSkipVerify = true
 	}
 
 	if ssl.CACert != "" {

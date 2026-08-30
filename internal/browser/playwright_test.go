@@ -222,7 +222,7 @@ func TestPlaywrightRuntimeWrapsCDPErrorWithoutRawURLOnParseFailure(t *testing.T)
 func TestPlaywrightRuntimeWrapsCDPErrorDoesNotLeakRawDriverErrorURL(t *testing.T) {
 	t.Parallel()
 
-	const rawCDPURL = "wss://user:super-secret@example.org:9222/devtools/browser/id?token=top-secret"
+	const rawCDPURL = "wss://user:super-secret@example.org:9222/devtools/browser/id?token=top-secret" //nolint:gosec // тестовая константа: проверка маскировки кредов в URL при ошибках
 
 	runtime := newPlaywrightRuntimeWithStartFn(rawCDPURL, func(cdpURL string, _ *playwright.RunOptions) (playwrightSession, error) {
 		return playwrightSession{}, errors.New("driver connect failed for " + cdpURL)

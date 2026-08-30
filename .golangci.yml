@@ -12,6 +12,37 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    # security + correctness
+    - gosec
+    - errorlint
+    - bodyclose
+    # style / hygiene
+    - copyloopvar
+    - misspell
+    - nolintlint
+    - revive
+  settings:
+    gosec:
+      excludes:
+        # G204: запуск git-подпроцесса с аргументами из конфигурации — ядро
+        # CLI-дизайна; экранирование аргументов захардкожено (PR #35).
+        - G204
+        # G304/G306: чтение и запись файлов по путям из доверенного
+        # пользовательского конфига; права 0644/0755 — осознанное поведение.
+        - G304
+        - G306
+        - G301
+    revive:
+      rules:
+        # Шумные в тестах (сигнатуры fakes обязаны совпадать с интерфейсом).
+        - name: unused-parameter
+          disabled: true
+        # Godoc-комментарии и package comments — отдельный DX-шаг цикла
+        # улучшений (PR-J), не линтерная блокировка.
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
   exclusions:
     paths:
       - ^tmp/
