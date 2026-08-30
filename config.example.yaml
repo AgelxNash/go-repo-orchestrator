@@ -9,6 +9,7 @@ browser:
 # Авторизация HTTP:
 #   token              -> Bearer auth (Authorization: Bearer <token>)
 #   login.username/password -> Basic Auth (если token пуст)
+#   ssl.*              -> mTLS клиентский сертификат / корпоративный CA (см. пример ниже)
 # type: вспомогательное поле, не влияет на runtime-логику.
 #
 # Принцип связи веток с Jira-группами:
@@ -39,6 +40,17 @@ jira:
 #     login:
 #       username: "user@example.com"
 #       password: "secret"
+
+# HTTP + mTLS / корпоративный CA (Jira Server/DC за mutual TLS или self-signed):
+#   - group: "MYPROJ"
+#     url: "https://jira.corp.local"
+#     token: "your_pat_here"                      # PAT (Bearer) — комбинируется с mTLS
+#     ssl:
+#       client_cert: /etc/ssl/corp/jira-client.pem # combined PEM (cert+key) или только сертификат
+#       # client_key: /etc/ssl/corp/jira.key       # отдельный файл ключа (если не combined)
+#       # client_key_password: "..."               # для зашифрованного PEM-ключа
+#       # ca_cert: /etc/ssl/corp/root-ca.pem       # корпоративный CA
+#       # verify: false                            # только для тестовых сред (по умолчанию true)
 
 repos:
   - name: 'Repo orchestrator'

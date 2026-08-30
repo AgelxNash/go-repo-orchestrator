@@ -64,7 +64,10 @@ func NewRootCommand(version, commit, date string, logger *zap.Logger) *cobra.Com
 				return err
 			}
 
-			runtime := newRuntime(v, cfg, logger)
+			runtime, err := newRuntime(v, cfg, logger)
+			if err != nil {
+				return err
+			}
 			defer func() {
 				if err := runtime.Close(); err != nil {
 					logger.Warn("playwright shutdown error", zap.Error(err))
@@ -153,7 +156,7 @@ func mustBind(cmd *cobra.Command, v *viper.Viper, key, flag string) {
 	}
 }
 
-func newRuntime(v *viper.Viper, cfg *config.Config, logger *zap.Logger) *app.Runtime {
+func newRuntime(v *viper.Viper, cfg *config.Config, logger *zap.Logger) (*app.Runtime, error) {
 	opts := app.DefaultRuntimeOptions(v.GetString("state_dir"))
 	if cfg != nil {
 		opts.BrowserCDPURL = cfg.Browser.CDPURL

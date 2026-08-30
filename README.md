@@ -272,8 +272,25 @@ repos:
 - **HTTP transport** (`playwright: false` или отсутствие поля) — стандартные HTTP-запросы к Jira REST API.
 
 Для аутентификации в HTTP-режиме используются:
-- **Bearer auth** — если задано поле `token`, добавляется заголовок `Authorization: Bearer <token>`.
+- **Bearer auth** — если задано поле `token`, добавляется заголовок `Authorization: Bearer <token>` (для Jira Server/DC это Personal Access Token).
 - **Basic auth** — если заданы `login.username` и `login.password` (и `token` пуст), используется базовая аутентификация.
+
+**mTLS и корпоративные CA (опциональный блок `ssl`):** для Jira Server/DC за mutual TLS или self-signed-прокси каждой группе можно задать клиентский сертификат и доверенный CA:
+
+```yaml
+jira:
+  - group: "MYPROJ"
+    url: "https://jira.corp.local"
+    token: "..."                # PAT (Bearer) — комбинируется с mTLS
+    ssl:
+      client_cert: /etc/ssl/corp/jira-client.pem  # combined PEM (cert+key) или только сертификат
+      # client_key: /etc/ssl/corp/jira.key        # отдельный файл ключа (если не combined)
+      # client_key_password: "..."                # для традиционно зашифрованного PEM-ключа
+      # ca_cert: /etc/ssl/corp/root-ca.pem        # корпоративный CA вместо системного trust store
+      # verify: false                             # только для тестовых сред (по умолчанию true)
+```
+
+Сертификат участвует в TLS-handshake, а `token`/`login` — в HTTP-заголовках: любые комбинации разрешены. Ошибки загрузки сертификатов приводят к остановке приложения на старте с понятным сообщением. Browser transport (`playwright: true`) использует сертификаты системного хранилища браузера и блоком `ssl` не управляется.
 
 Для запросов в рамках `Jira release-driven autocheck` оркестратор поддерживает стратегию bounded retry/backoff и корректно обрабатывает заголовок `Retry-After` при получении ошибки 429 (Too Many Requests).
 
