@@ -2,10 +2,7 @@ name: Markdown Link Check
 permissions:
   contents: read
 on:
-  push:
-    paths: [ '**/*.md' ]
-  pull_request:
-    paths: [ '**/*.md' ]
+  workflow_dispatch:
   schedule:
     - cron: '0 0 * * 1' # Run weekly on Monday
 jobs:

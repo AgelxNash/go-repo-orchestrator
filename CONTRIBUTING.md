@@ -69,20 +69,19 @@ make release-tag VERSION=v0.1.0 MESSAGE='First public release "stable"'
 
 ## Какие проверки блокируют merge
 
-Для Pull Request запускаются обязательные проверки:
+Для Pull Request обязательным техническим quality gate является:
 
-- `pr-title` — проверка заголовка PR на Conventional Commits.
-- `commit-messages` — проверка сообщений коммитов в PR на Conventional Commits.
-- `go-checks` — проверка форматирования, тестов, `go vet` и `golangci-lint` (конфиг `.golangci.yml`).
+- `ci / go-checks` — проверка форматирования, тестов, `go vet`, сборки и `golangci-lint` (конфиг `.golangci.yml`).
 
-Если любая из этих проверок падает, PR нельзя мерджить.
+Дополнительно может требоваться `conventional-commits / pr-title`, если для PR используется Conventional Commits.
+
+Следующие проверки являются advisory и не блокируют merge: проверка сообщений отдельных коммитов, Markdown Link Check, YAML Lint, CodeQL, CodeRabbit и Dependabot Auto Merge. Они помогают заметить проблемы, но могут зависеть от внешних сервисов, лимитов или нерелевантных для изменения файлов.
 
 ## Branch protection (настройка вручную)
 
-В GitHub settings для целевой ветки включите branch protection и добавьте Required status checks:
+В GitHub settings для целевой ветки включите Require a pull request before merging и Require status checks to pass before merging. Добавьте Required status checks:
 
-- `pr-title`
-- `commit-messages`
-- `go-checks`
+- `ci / go-checks`
+- `conventional-commits / pr-title` — если нужен контроль формата заголовков
 
-Без этого workflow будет показывать ошибки, но merge может остаться доступным в зависимости от настроек репозитория.
+Не добавляйте в Required status checks CodeRabbit, CodeQL, Markdown Link Check, YAML Lint, Dependabot Auto Merge или `commit-messages`. Не включайте обязательную актуальность ветки и обязательное разрешение разговоров, если они создают лишние rebase-циклы или блокировки от advisory-ботов.
