@@ -10,8 +10,8 @@
 - [PR-F - Разбиение Model.Update](tasks/2026-08-30__improvement-pr-f-split-tui-update.md) — Approved
 - [PR-G - Context-aware Jira prefetch](tasks/2026-08-30__improvement-pr-g-context-jira-prefetch.md) — Approved
 - [PR-H - CleanerPort + structured warnings](tasks/2026-08-30__improvement-pr-h-cleaner-port-warnings.md) — Approved
-- [PR-I - CHANGELOG + ADR](tasks/2026-08-30__improvement-pr-i-changelog-adr.md) — InProgress
-- [PR-J - JSON Schema + strict-unmarshal](tasks/2026-08-30__improvement-pr-j-config-schema-strict.md) — Approved
+- [PR-I - CHANGELOG + ADR](tasks/2026-08-30__improvement-pr-i-changelog-adr.md) — Done (PR #45 merged 2026-08-30)
+- [PR-J - JSON Schema + strict-unmarshal](tasks/2026-08-30__improvement-pr-j-config-schema-strict.md) — Done (PR готов 2026-08-30)
 
 ## Архив
 

@@ -431,6 +431,52 @@ func TestLoadFailsOnInvalidBrowserCDPURL(t *testing.T) {
 	}
 }
 
+func TestLoadFailsOnUnknownRootConfigKey(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	raw := "unexpected_root: true\n" +
+		"repos:\n" +
+		"  - name: test\n" +
+		"    path: ./tmp/repo\n"
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected unknown root config key validation error")
+	}
+	if !strings.Contains(err.Error(), "unexpected_root") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFailsOnUnknownConfigKey(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	raw := "repos:\n" +
+		"  - name: test\n" +
+		"    path: ./tmp/repo\n" +
+		"    branch:\n" +
+		"      keep: ['^main$']\n" +
+		"      typo_keep: ['^master$']\n"
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected unknown config key validation error")
+	}
+	if !strings.Contains(err.Error(), "typo_keep") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadFailsOnInvalidRegex(t *testing.T) {
 	t.Parallel()
 
@@ -646,7 +692,7 @@ func TestLoadFailsOnDuplicatePathWorkdirKey(t *testing.T) {
 	}
 }
 
-func TestLoadDoesNotApplyLegacyFallbackFields(t *testing.T) {
+func TestLoadFailsOnLegacyFallbackFields(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -661,20 +707,13 @@ func TestLoadDoesNotApplyLegacyFallbackFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("load failed: %v", err)
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected legacy fallback fields validation error")
 	}
-
-	repo := cfg.Repos[0]
-	if repo.Branch.Autoswitch != "" {
-		t.Fatalf("expected empty branch.autoswitch without branch section, got %q", repo.Branch.Autoswitch)
-	}
-	if repo.IsProtected("release/1.0") {
-		t.Fatal("expected legacy keep_patterns to be ignored")
-	}
-	if _, found := repo.ExtractJiraKey("feature/OPS-123"); found {
-		t.Fatal("expected legacy jira patterns to be ignored")
+	errText := err.Error()
+	if !strings.Contains(errText, "autoswitch_branch") || !strings.Contains(errText, "keep_patterns") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
