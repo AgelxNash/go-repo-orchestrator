@@ -50,6 +50,9 @@ jobs:
           path: tmp/coverage.out
           retention-days: 14
 
+      - name: Vulnerability check (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
       - name: Vet
         run: |
           pkg_patterns="./cmd/... ./internal/..."
