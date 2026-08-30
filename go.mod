@@ -1,12 +1,12 @@
 module github.com/agelxnash/go-repo-orchestrator
 
-go 1.25.0
+go 1.26.6
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/go-git/go-git/v5 v5.19.1
+	github.com/go-git/go-git/v5 v5.19.2
 	github.com/playwright-community/playwright-go v0.5700.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -63,9 +63,9 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
