@@ -33,13 +33,22 @@ jobs:
             exit 1
           fi
 
-      - name: Test
+      - name: Test (race detector + coverage)
         run: |
           pkg_patterns="./cmd/... ./internal/..."
           if [ -d ./pkg ]; then
             pkg_patterns="$pkg_patterns ./pkg/..."
           fi
-          go test $(go list $pkg_patterns)
+          mkdir -p tmp
+          go test -race -coverprofile=tmp/coverage.out $(go list $pkg_patterns)
+          go tool cover -func=tmp/coverage.out
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: tmp/coverage.out
+          retention-days: 14
 
       - name: Vet
         run: |
