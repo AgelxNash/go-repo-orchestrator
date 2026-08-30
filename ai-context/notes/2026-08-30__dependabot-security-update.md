@@ -2,8 +2,8 @@
 
 ## Общая информация
 - **Дата:** 2026-08-30
-- **Контекст:** Закрытие открытых Dependabot alerts (https://github.com/AgelxNash/go-repo-orchestrator/security/dependabot). Всего зафиксировано **16 открытых алертов** в трёх пакетах.
-- **Инструменты:** Playwright (чтение приватной страницы alerts), `go get`, `govulncheck` (x/vuln latest, собран под go1.26).
+- **Контекст:** Закрытие 16 открытых Dependabot alerts в разделе `Security and quality → Dependabot` репозитория.
+- **Инструменты:** Playwright (чтение приватной страницы alerts), `go get`, `govulncheck` (x/vuln latest, собран под Go 1.26).
 
 ## Исходное состояние (16 alerts)
 
@@ -22,7 +22,7 @@
 Причина, почему Dependabot не мог обновить сам: go-git v5.19.2 требует `x/crypto >= 0.53.0` и `x/net >= 0.56.0`, что выше минимальных patched-версий алертов («Dependabot cannot update to the required version: One or more other dependencies require a version that is incompatible»).
 
 ## Внесённые изменения
-Обновлены `go.mod` и `go.sum` (единственные изменённые файлы, код проекта не тронут):
+Обновлены `go.mod` и `go.sum`; код проекта не тронут. Go baseline поднят с 1.25.0 до 1.26.6. CI и release уже используют `go-version-file: go.mod`, поэтому обе цепочки собирают проект одной и той же patched-версией Go.
 
 | Модуль | Было | Стало |
 |---|---|---|
@@ -49,11 +49,8 @@
 
 ## Остаточный риск
 1. **GO-2026-5932** (`x/crypto` v0.55.0, fixed: N/A) — ждём upstream-релиз; не вызывается кодом. Отслеживать в следующем цикле обновлений.
-2. **Stdlib Go 1.26.3 — 7 уязвимостей** (GO-2026-6218, -6090, -5972, -5856, -5039, -5037, -5026; фиксы в go1.26.4–1.26.6): crypto/tls (ECH leak, handshake limits), net/url, encoding/asn1, net/textproto, crypto/x509, net/http. Вызываются через `http.Client` в `internal/browser` и TLS в `internal/config`/`internal/jira`. Закрываются **обновлением toolchain до go1.26.6+**, а не зависимостями. Требует решения владельца:
-   - обновить `go` directive в `go.mod` (сейчас `go 1.25.0`) и Go в CI,
-   - после этого пересобрать/перепроверить `govulncheck`.
+2. **Go standard library:** baseline поднят до Go 1.26.6, которая содержит фиксы для ранее найденных уязвимостей GO-2026-6218, -6090, -5972, -5856, -5039, -5037 и -5026. Требуется повторный прогон `govulncheck` после обновления toolchain.
 3. Dependabot alerts на GitHub закроются автоматически после попадания обновлённого `go.mod` в `main` (Dependabot scans default branch).
 
 ## Ограничения
-- Операции `git commit`, `git push` и `git merge` не выполнялись (согласно глобальным инструкциям безопасности) — изменения ждут в рабочем дереве (`go.mod`, `go.sum`).
-- Изменение `go` directive / CI-toolchain не выполнялось (новый вход в конфигурацию сборки — требует явного разрешения владельца).
+- Операции `git commit`, `git push` и `git merge` не выполнялись на момент первоначальной версии этой заметки. Актуальный статус фиксируется в итоговом отчёте security-работ.
