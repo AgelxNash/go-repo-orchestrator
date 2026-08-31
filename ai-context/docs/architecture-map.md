@@ -5,7 +5,6 @@
 ```
 cmd/
   go-repo-orchestrator/     — точка входа (main.go)
-  git-branch-cleaner/       — пустая директория (legacy/placeholder)
 internal/
   app/                      — bootstrap, runtime, production logger
   cli/                      — Cobra-команды (root, generate)
@@ -17,7 +16,6 @@ internal/
   jira/                     — Jira StatusService (HTTP + Playwright browser transport)
   browser/                  — Playwright runtime (CDP/launch, auto-bootstrap)
   tui/                      — BubbleTea модель (двухпанельный интерфейс)
-  backup/                   — пустая директория (placeholder)
 ```
 
 ## Поток данных (runtime flow)
