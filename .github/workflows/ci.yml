@@ -44,7 +44,7 @@ jobs:
           go tool cover -func=tmp/coverage.out
 
       - name: Upload coverage profile
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-profile
           path: tmp/coverage.out
