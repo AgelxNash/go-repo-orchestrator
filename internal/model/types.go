@@ -110,6 +110,11 @@ type RepoWarning struct {
 	Message string
 }
 
+const (
+	RepoWarningRemoteSyncFailed = "remote_sync_failed"
+	RepoWarningEmptyClone       = "empty_clone"
+)
+
 // Text возвращает человекочитаемое сообщение предупреждения.
 func (w RepoWarning) Text() string {
 	return w.Message
@@ -146,7 +151,12 @@ func (s RepoStat) HasError() bool {
 
 // HasSyncWarning возвращает true, если синхронизация remote не удалась, но локальные данные доступны.
 func (s RepoStat) HasSyncWarning() bool {
-	return s.SyncWarning != "" || s.Warning.Message != ""
+	return s.SyncWarning != "" || s.Warning.Code == RepoWarningRemoteSyncFailed
+}
+
+// HasEmptyCloneWarning возвращает true, если репозиторий прочитан как оболочка без checkout.
+func (s RepoStat) HasEmptyCloneWarning() bool {
+	return s.Warning.Code == RepoWarningEmptyClone
 }
 
 // ScriptResult хранит результат генерации скрипта удаления веток.

@@ -19,13 +19,18 @@ func (c *Cleaner) LoadRepoStat(ctx context.Context, repo config.RepoConfig) (mod
 	if err != nil {
 		return model.RepoStat{}, fmt.Errorf("получить статус репозитория: %w", err)
 	}
-	stat.Warning = syncWarning
-	stat.SyncWarning = syncWarning.Text()
+	if syncWarning.Code != "" {
+		stat.SyncWarning = syncWarning.Text()
+		if stat.Warning.Code != model.RepoWarningEmptyClone {
+			stat.Warning = syncWarning
+		}
+	}
 
 	return stat, nil
 }
 
-const repoWarningRemoteSyncFailed = "remote_sync_failed"
+const repoWarningRemoteSyncFailed = model.RepoWarningRemoteSyncFailed
+const repoWarningEmptyClone = model.RepoWarningEmptyClone
 
 func newRemoteSyncWarning(err error) model.RepoWarning {
 	return model.RepoWarning{

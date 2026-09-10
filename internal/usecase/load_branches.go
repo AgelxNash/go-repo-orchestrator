@@ -2,8 +2,10 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/jira"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
@@ -34,8 +36,15 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 	}
 
 	currentBranch, err := c.git.CurrentBranch(ctx, managedPath)
+	emptyClone := false
+	emptyCloneMsg := ""
 	if err != nil {
-		return model.RepoBranches{}, RepoLoadSummary{}, err
+		if !errors.Is(err, git.ErrEmptyClone) {
+			return model.RepoBranches{}, RepoLoadSummary{}, err
+		}
+		emptyClone = true
+		emptyCloneMsg = err.Error()
+		currentBranch = ""
 	}
 
 	defaultBranch, err := c.git.DetectDefaultBranch(ctx, managedPath, currentBranch)
@@ -137,13 +146,21 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 
 	c.logJiraMappingSummary(repo.Name, mappingStats)
 
+	warning := syncWarning
+	if emptyClone {
+		warning = model.RepoWarning{
+			Code:    repoWarningEmptyClone,
+			Message: emptyCloneMsg,
+		}
+	}
+
 	return model.RepoBranches{
 		RepoName:      repo.Name,
 		RepoURL:       repo.URL,
 		RepoSource:    repo.SourceType(),
 		RepoPath:      managedPath,
 		SyncWarning:   syncWarning.Text(),
-		Warning:       syncWarning,
+		Warning:       warning,
 		DefaultBranch: defaultBranch,
 		CurrentBranch: currentBranch,
 		DirtyStats:    dirtyStats,

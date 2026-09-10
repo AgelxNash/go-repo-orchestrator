@@ -118,6 +118,45 @@ func TestRepoListStateShowsWarningForUnsyncedRepo(t *testing.T) {
 	}
 }
 
+func TestRepoListStateShowsEmptyClone(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "shell", Path: "/tmp/shell"}},
+	}, nil, false)
+
+	m.repoStats["shell"] = model.RepoStat{
+		Loaded: true,
+		Warning: model.RepoWarning{
+			Code:    model.RepoWarningEmptyClone,
+			Message: "репозиторий-оболочка без checkout: HEAD не резолвится",
+		},
+	}
+
+	_, status := m.repoListState("shell")
+	if status != "Нет HEAD" {
+		t.Fatalf("expected empty clone status, got %q", status)
+	}
+}
+
+func TestCanActivateBranchesAllowsEmptyClone(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "shell", Path: "/tmp/shell"}},
+	}, nil, false)
+
+	m.activeRepo = model.RepoBranches{RepoName: "shell"}
+	m.repoStats["shell"] = model.RepoStat{
+		Loaded: true,
+		Warning: model.RepoWarning{
+			Code:    model.RepoWarningEmptyClone,
+			Message: "репозиторий-оболочка без checkout",
+		},
+	}
+
+	ok, reason := m.canActivateBranches()
+	if !ok {
+		t.Fatalf("expected empty clone to open branches panel, got %q", reason)
+	}
+}
+
 func TestCanActivateBranchesAllowsSyncWarning(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/repo-a.git"}},
@@ -606,8 +645,79 @@ func TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete(
 	if next.startupLoading {
 		t.Fatal("expected startup loading to be disabled after all startup tasks complete")
 	}
-	if !strings.Contains(next.statusLine, "Первичная синхронизация URL-репозиториев завершена: 2/2") {
+	if !strings.Contains(next.statusLine, "Первичная синхронизация завершена: синхронизировано 2/2") {
 		t.Fatalf("expected startup completion summary, got %q", next.statusLine)
+	}
+}
+
+func TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-a", URL: "https://example.com/a.git"},
+			{Name: "repo-b", URL: "https://example.com/b.git"},
+		},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a", CurrentBranch: "main"},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-b"],
+		repoName:  "repo-b",
+		startup:   true,
+		err:       fmt.Errorf("kex_exchange_identification: read: Connection reset by peer\nfatal: Не удалось прочитать из внешнего репозитория."),
+	})
+	next = updated.(Model)
+
+	if next.startupLoading {
+		t.Fatal("expected startup loading to finish")
+	}
+	if !strings.Contains(next.statusLine, "синхронизировано 1/2") {
+		t.Fatalf("expected synced 1/2 summary, got %q", next.statusLine)
+	}
+	if !strings.Contains(next.statusLine, "1 ошибка (сеть)") {
+		t.Fatalf("expected network error count, got %q", next.statusLine)
+	}
+	if next.selectedRepoName() != "repo-b" {
+		t.Fatalf("expected cursor to jump to failed repo, got %q", next.selectedRepoName())
+	}
+
+	logText := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(logText, "[СВОДКА]") {
+		t.Fatalf("expected summary log line, got %q", logText)
+	}
+	if !strings.Contains(logText, "kex_exchange_identification") {
+		t.Fatalf("expected full fetch error in log, got %q", logText)
+	}
+}
+
+func TestStatsPanelWrapsFullFetchError(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+	m.width = 64
+	m.height = 36
+	m.repoStats["repo-a"] = model.RepoStat{
+		Loaded: true,
+		LoadError: "хостинг сбросил SSH-соединение или соединение нестабильно (лимит одновременных сессий):\n" +
+			"ошибка git fetch: kex_exchange_identification: read: Connection reset by peer\n" +
+			"fatal: Не удалось прочитать из внешнего репозитория.",
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "kex_exchange_identification") {
+		t.Fatalf("expected handshake cause in info panel, got %q", view)
+	}
+	if strings.Contains(view, "из вне…") && !strings.Contains(view, "Connection reset by peer") {
+		t.Fatalf("expected error not to be truncated before the cause, got %q", view)
 	}
 }
 

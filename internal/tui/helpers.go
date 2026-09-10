@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
 
@@ -309,6 +310,21 @@ func (m Model) selectedRepoName() string {
 	return m.cfg.Repos[m.repoIdx].Name
 }
 
+func (m *Model) selectRepoByName(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for i, repo := range m.cfg.Repos {
+		if repo.Name == name {
+			m.repoIdx = i
+			m.ensureRepoCursorVisible()
+			m.activateSelectedRepoFromCache()
+			return
+		}
+	}
+}
+
 func (m Model) selectedRepoStat() (model.RepoStat, bool) {
 	repoName := m.selectedRepoName()
 	if repoName == "" {
@@ -344,6 +360,9 @@ func (m Model) repoListState(repoName string) (string, string) {
 		if stat.HasError() {
 			return branch, "Ошибка"
 		}
+		if stat.HasEmptyCloneWarning() {
+			return branch, "Нет HEAD"
+		}
 		if stat.HasSyncWarning() {
 			return branch, "Предупреждение"
 		}
@@ -364,6 +383,8 @@ func (m Model) renderRepoStatus(status string) string {
 	switch status {
 	case "Ошибка":
 		return errorStyle.Render("[E]")
+	case "Нет HEAD":
+		return warnStyle.Render("[H]")
 	case "Предупреждение":
 		return warnStyle.Render("[W]")
 	case "Изменения":
@@ -381,6 +402,8 @@ func (m Model) repoStatusCode(status string) string {
 	switch status {
 	case "Ошибка":
 		return "E"
+	case "Нет HEAD":
+		return "H"
 	case "Предупреждение":
 		return "W"
 	case "Изменения":
@@ -530,9 +553,15 @@ func userFacingError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, git.ErrEmptyClone) {
+		return err
+	}
 
 	msg := strings.TrimSpace(err.Error())
-	msg = strings.ReplaceAll(msg, "\n", " ")
+	if errors.Is(err, git.ErrTransientNetwork) {
+		details := strings.TrimPrefix(msg, git.ErrTransientNetwork.Error()+": ")
+		return errors.New("хостинг сбросил SSH-соединение или соединение нестабильно (лимит одновременных сессий):\n" + strings.TrimSpace(details))
+	}
 
 	replacements := []struct {
 		from string
@@ -555,16 +584,18 @@ func userFacingError(err error) error {
 
 	lowerMsg := strings.ToLower(msg)
 	switch {
+	case strings.Contains(lowerMsg, "kex_exchange_identification") || strings.Contains(lowerMsg, "connection reset by peer"):
+		return errors.New("хостинг сбросил SSH-соединение или соединение нестабильно (лимит одновременных сессий):\n" + msg)
 	case strings.Contains(lowerMsg, "context deadline exceeded") || strings.Contains(lowerMsg, "operation timed out") || strings.Contains(lowerMsg, "i/o timeout"):
-		msg = "таймаут обращения к удаленному репозиторию: сервер недоступен или отвечает слишком долго"
+		msg = "таймаут обращения к удаленному репозиторию: сервер недоступен или отвечает слишком долго\n" + msg
 	case strings.Contains(lowerMsg, "connection refused"):
-		msg = "удаленный репозиторий недоступен: соединение отклонено"
+		msg = "удаленный репозиторий недоступен: соединение отклонено\n" + msg
 	case strings.Contains(lowerMsg, "no such host") || strings.Contains(lowerMsg, "could not resolve host"):
-		msg = "удаленный репозиторий недоступен: не удалось разрешить хост"
+		msg = "удаленный репозиторий недоступен: не удалось разрешить хост\n" + msg
 	case strings.Contains(lowerMsg, "no route to host"):
-		msg = "удаленный репозиторий недоступен: нет маршрута до хоста"
+		msg = "удаленный репозиторий недоступен: нет маршрута до хоста\n" + msg
 	case strings.Contains(lowerMsg, "permission denied"):
-		msg = "доступ к удаленному репозиторию запрещен (проверьте SSH-ключи/права)"
+		msg = "доступ к удаленному репозиторию запрещен (проверьте SSH-ключи/права)\n" + msg
 	}
 
 	if strings.HasPrefix(msg, "git ") {
@@ -577,6 +608,75 @@ func userFacingError(err error) error {
 	}
 
 	return errors.New(msg)
+}
+
+func wrapText(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if strings.TrimSpace(s) == "" {
+		return []string{s}
+	}
+
+	var lines []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapParagraph(para, width)...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func wrapParagraph(s string, width int) []string {
+	runes := []rune(s)
+	if len(runes) <= width {
+		return []string{s}
+	}
+
+	var lines []string
+	for len(runes) > width {
+		cut := width
+		if space := lastSpaceIndex(runes[:width]); space >= width/3 {
+			cut = space
+		}
+		lines = append(lines, string(runes[:cut]))
+		runes = runes[cut:]
+		for len(runes) > 0 && runes[0] == ' ' {
+			runes = runes[1:]
+		}
+	}
+	if len(runes) > 0 {
+		lines = append(lines, string(runes))
+	}
+	return lines
+}
+
+func lastSpaceIndex(runes []rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] == ' ' {
+			return i
+		}
+	}
+	return -1
+}
+
+func wrapPrefixed(s, prefix string, width int) []string {
+	inner := width - len([]rune(prefix))
+	if inner < 8 {
+		inner = 8
+	}
+	raw := wrapText(s, inner)
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		out = append(out, prefix+line)
+	}
+	return out
 }
 
 func truncate(s string, limit int) string {

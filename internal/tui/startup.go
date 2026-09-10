@@ -147,10 +147,105 @@ func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 		m.startupCurrentRepo = ""
 		m.startupCurrentStage = "завершено"
 		m.startupStageElapsed = 0
-		if m.startupURLTotal > 0 {
-			m.statusLine = fmt.Sprintf("Первичная синхронизация URL-репозиториев завершена: %d/%d", m.startupURLDone, m.startupURLTotal)
+		m.applyStartupCompletionSummary()
+	}
+}
+
+func (m *Model) applyStartupCompletionSummary() {
+	summary := m.startupCompletionSummary()
+	m.statusLine = summary.text
+	if summary.logLine != "" {
+		m.pushLog(summary.logLine)
+	}
+	for _, line := range summary.problemLines {
+		m.pushLog(line)
+	}
+	if summary.firstProblem != "" {
+		m.selectRepoByName(summary.firstProblem)
+	}
+}
+
+type startupCompletionSummary struct {
+	text         string
+	logLine      string
+	problemLines []string
+	firstProblem string
+}
+
+func (m Model) startupCompletionSummary() startupCompletionSummary {
+	total := len(m.cfg.Repos)
+	synced := 0
+	var (
+		failed      []string
+		cache       []string
+		emptyClones []string
+	)
+	for _, repo := range m.cfg.Repos {
+		stat := m.repoStats[repo.Name]
+		switch {
+		case stat.HasError():
+			failed = append(failed, repo.Name)
+		case stat.HasEmptyCloneWarning():
+			emptyClones = append(emptyClones, repo.Name)
+		case stat.HasSyncWarning():
+			cache = append(cache, repo.Name)
+		case stat.Loaded:
+			synced++
 		}
 	}
+
+	parts := []string{fmt.Sprintf("синхронизировано %d/%d", synced, total)}
+	if len(failed) > 0 {
+		parts = append(parts, fmt.Sprintf("%s (сеть)", ruCount(len(failed), "ошибка", "ошибки", "ошибок")))
+	}
+	if len(cache) > 0 {
+		parts = append(parts, fmt.Sprintf("%s из кэша", ruCount(len(cache), "репозиторий", "репозитория", "репозиториев")))
+	}
+	if len(emptyClones) > 0 {
+		parts = append(parts, fmt.Sprintf("%s без checkout", ruCount(len(emptyClones), "репозиторий", "репозитория", "репозиториев")))
+	}
+
+	summary := startupCompletionSummary{
+		text: "Первичная синхронизация завершена: " + strings.Join(parts, ", "),
+	}
+	if len(failed)+len(cache)+len(emptyClones) == 0 {
+		return summary
+	}
+
+	summary.logLine = "[СВОДКА] " + summary.text
+	for _, name := range failed {
+		summary.problemLines = append(summary.problemLines, "[ERR] "+name+": синхронизация не удалась (сеть)")
+	}
+	for _, name := range cache {
+		summary.problemLines = append(summary.problemLines, "[WARN] "+name+": используется кэш, remote не обновлен")
+	}
+	for _, name := range emptyClones {
+		summary.problemLines = append(summary.problemLines, "[WARN] "+name+": репозиторий-оболочка без checkout")
+	}
+	switch {
+	case len(failed) > 0:
+		summary.firstProblem = failed[0]
+	case len(emptyClones) > 0:
+		summary.firstProblem = emptyClones[0]
+	case len(cache) > 0:
+		summary.firstProblem = cache[0]
+	}
+	return summary
+}
+
+func ruCount(n int, one, few, many string) string {
+	nAbs := n % 100
+	n1 := nAbs % 10
+	word := many
+	switch {
+	case nAbs >= 11 && nAbs <= 14:
+		word = many
+	case n1 == 1:
+		word = one
+	case n1 >= 2 && n1 <= 4:
+		word = few
+	}
+	return fmt.Sprintf("%d %s", n, word)
 }
 
 func (m *Model) finishStartupURLTaskIfNeeded(repoName string, startup bool) {
@@ -443,23 +538,26 @@ func (m Model) viewStartupLogPanel(width, height int) string {
 	if len(m.eventLog) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(dimFg).Background(logBg).Render("  (ожидание событий...)"))
 	} else {
-		start := 0
-		if len(m.eventLog) > innerH {
-			start = len(m.eventLog) - innerH
-		}
-		for _, entry := range m.eventLog[start:] {
+		var rendered []string
+		for _, entry := range m.eventLog {
 			var entryFg lipgloss.Color
 			switch {
-			case strings.HasPrefix(entry, "[WARN]") || strings.HasPrefix(entry, "[ERR]"):
+			case strings.HasPrefix(entry, "[WARN]") || strings.HasPrefix(entry, "[ERR]") || strings.HasPrefix(entry, "[СВОДКА]"):
 				entryFg = mcYellow
 			case strings.HasPrefix(entry, "[OK]"), strings.HasPrefix(entry, "[СКРИПТ]"):
 				entryFg = lipgloss.Color("46")
 			default:
 				entryFg = logFg
 			}
-			entryLine := lipgloss.NewStyle().Foreground(entryFg).Background(logBg).Render(truncate("  "+entry, innerW))
-			lines = append(lines, entryLine)
+			for _, wrapped := range wrapPrefixed(entry, "  ", innerW) {
+				rendered = append(rendered, lipgloss.NewStyle().Foreground(entryFg).Background(logBg).Render(wrapped))
+			}
 		}
+		start := 0
+		if len(rendered) > innerH {
+			start = len(rendered) - innerH
+		}
+		lines = append(lines, rendered[start:]...)
 	}
 
 	return st.Render(strings.Join(lines, "\n"))

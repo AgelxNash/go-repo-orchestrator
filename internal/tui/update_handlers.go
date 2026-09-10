@@ -96,10 +96,7 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 	if msg.startup && startupInProgress {
 		m.markStartupRepoDone(msg.repoName)
 	}
-	m.finishStartupTaskIfNeeded(msg.startup)
-	if msg.startup && startupInProgress && m.startupLoading {
-		m.setStartupProgressStatus()
-	}
+
 	friendlyErr := userFacingError(msg.err)
 	if msg.err != nil {
 		stat := model.RepoStat{Loaded: true}
@@ -108,6 +105,33 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 		}
 		m.repoStats[msg.repoName] = stat
 		delete(m.repoData, msg.repoName)
+	} else {
+		syncWarning := strings.TrimSpace(msg.rb.SyncWarning)
+		if syncWarning != "" {
+			if friendly := userFacingError(errors.New(syncWarning)); friendly != nil {
+				syncWarning = friendly.Error()
+			}
+		}
+		m.repoData[msg.repoName] = msg.rb
+		m.applyAutocheckSelection(msg.repoName, msg.rb.Branches)
+		m.repoStats[msg.repoName] = model.RepoStat{
+			CurrentBranch: msg.rb.CurrentBranch,
+			DirtyStats:    msg.rb.DirtyStats,
+			LoadError:     "",
+			SyncWarning:   syncWarning,
+			Warning:       msg.rb.Warning,
+			Loaded:        true,
+		}
+		m.ensureRepoState(msg.repoName)
+	}
+
+	m.finishStartupTaskIfNeeded(msg.startup)
+	if msg.startup && startupInProgress && m.startupLoading {
+		m.setStartupProgressStatus()
+	}
+
+	if msg.err != nil {
+		stat := m.repoStats[msg.repoName]
 		if msg.repoName == m.selectedRepoName() && (!msg.startup || !startupInProgress) {
 			m.statusLine = fmt.Sprintf("Не удалось загрузить %q: %s", msg.repoName, stat.LoadError)
 		}
@@ -117,22 +141,8 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 		m.activateSelectedRepoFromCache()
 		return m, nil
 	}
-	m.repoData[msg.repoName] = msg.rb
-	m.applyAutocheckSelection(msg.repoName, msg.rb.Branches)
-	syncWarning := strings.TrimSpace(msg.rb.SyncWarning)
-	if syncWarning != "" {
-		if friendly := userFacingError(errors.New(syncWarning)); friendly != nil {
-			syncWarning = friendly.Error()
-		}
-	}
-	m.repoStats[msg.repoName] = model.RepoStat{
-		CurrentBranch: msg.rb.CurrentBranch,
-		DirtyStats:    msg.rb.DirtyStats,
-		LoadError:     "",
-		SyncWarning:   syncWarning,
-		Loaded:        true,
-	}
-	m.ensureRepoState(msg.repoName)
+
+	syncWarning := strings.TrimSpace(m.repoStats[msg.repoName].SyncWarning)
 	m.activateSelectedRepoFromCache()
 	if msg.repoName == m.selectedRepoName() && (!msg.startup || !startupInProgress) {
 		if syncWarning != "" {
@@ -158,6 +168,9 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 		}
 		if syncWarning != "" {
 			m.pushLog(fmt.Sprintf("[WARN] %s: использую кэш: %s", msg.repoName, syncWarning))
+		}
+		if msg.rb.Warning.Code == model.RepoWarningEmptyClone {
+			m.pushLog(fmt.Sprintf("[WARN] %s: %s", msg.repoName, msg.rb.Warning.Text()))
 		}
 		m.pushLog(fmt.Sprintf("[OK] %s: синхронизация завершена%s", msg.repoName, msg.syncNote))
 	} else {
@@ -206,7 +219,6 @@ func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) 
 	if msg.startup && startupInProgress {
 		m.markStartupRepoDone(msg.repoName)
 	}
-	m.finishStartupTaskIfNeeded(msg.startup)
 	stat := msg.stat
 	stat.Loaded = true
 	if strings.TrimSpace(stat.SyncWarning) != "" {
@@ -221,6 +233,7 @@ func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) 
 		}
 	}
 	m.repoStats[msg.repoName] = stat
+	m.finishStartupTaskIfNeeded(msg.startup)
 	if msg.startup && startupInProgress {
 		if stat.LoadError != "" {
 			m.pushLog(fmt.Sprintf("[ERR] %s: статус Git не получен: %s", msg.repoName, stat.LoadError))
