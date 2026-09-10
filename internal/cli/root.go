@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -126,7 +127,15 @@ func initConfig(v *viper.Viper) error {
 	v.SetConfigFile(configPath)
 	v.SetConfigType("yaml")
 
-	if err := v.ReadInConfig(); err != nil {
+	expanded, err := config.ReadFileWithEnvExpansion(configPath)
+	if err != nil {
+		var notFoundErr viper.ConfigFileNotFoundError
+		if errors.As(err, &notFoundErr) || strings.Contains(err.Error(), "Not Found") {
+			return fmt.Errorf("файл конфигурации не найден: %s", configPath)
+		}
+		return err
+	}
+	if err := v.ReadConfig(bytes.NewReader(expanded)); err != nil {
 		var notFoundErr viper.ConfigFileNotFoundError
 		if errors.As(err, &notFoundErr) || strings.Contains(err.Error(), "Not Found") {
 			return fmt.Errorf("файл конфигурации не найден: %s", configPath)

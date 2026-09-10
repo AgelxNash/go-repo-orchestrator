@@ -159,13 +159,18 @@ type compiledPattern struct {
 	re  *regexp.Regexp
 }
 
-// Load загружает YAML-конфиг, валидирует обязательные поля и компилирует regex-правила.
+// Load загружает YAML-конфиг (с разворотом ${VAR}/${VAR:-default} плейсхолдеров),
+// валидирует обязательные поля и компилирует regex-правила.
 func Load(path string) (*Config, error) {
+	expanded, err := ReadFileWithEnvExpansion(path)
+	if err != nil {
+		return nil, err
+	}
+
 	v := viper.New()
-	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
 
-	if err := v.ReadInConfig(); err != nil {
+	if err := v.ReadConfig(bytes.NewReader(expanded)); err != nil {
 		return nil, fmt.Errorf("прочитать конфиг: %w", err)
 	}
 

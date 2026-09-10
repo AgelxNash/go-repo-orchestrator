@@ -8,6 +8,7 @@
 
 ### Added
 
+- Подстановка переменных окружения в значениях YAML-конфига: плейсхолдеры `${VAR}` и `${VAR:-default}` (синтаксис docker-compose) во всех строковых значениях; незаданная переменная без дефолта — понятная ошибка на старте с именем переменной и путём ключа; `$$` экранирует литеральный `$`.
 - CI: `make test-race`, coverage-профиль и artifact `coverage-profile` в GitHub Actions.
 - CI: `make vulncheck` и `govulncheck` в `ci / go-checks`.
 - CI: расширенный набор `golangci-lint` (`gosec`, `errorlint`, `bodyclose`, `copyloopvar`, `misspell`, `nolintlint`, `revive`).
