@@ -41,12 +41,16 @@ func (m Model) View() string {
 	return appStyle.Render(view)
 }
 
+// viewReposTab рисует вкладку репозиториев и увеличивает инфо-панель при ошибках синхронизации.
 func (m Model) viewReposTab(width, height int) string {
 	if !m.showInfo {
 		return m.viewReposPanel(width, height)
 	}
 
 	infoHeight := min(14, max(8, height/3))
+	if stat, ok := m.selectedRepoStat(); ok && (stat.HasError() || stat.HasSyncWarning() || stat.HasEmptyCloneWarning()) {
+		infoHeight = min(18, max(10, height/2))
+	}
 	repoHeight := max(7, height-infoHeight-1)
 	ruler := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", width))
 
@@ -58,12 +62,16 @@ func (m Model) viewReposTab(width, height int) string {
 	)
 }
 
+// viewBranchesTab рисует вкладку веток и увеличивает инфо-панель при ошибках синхронизации.
 func (m Model) viewBranchesTab(width, height int) string {
 	if !m.showInfo {
 		return m.viewBranchesPanel(width, height)
 	}
 
 	infoHeight := min(14, max(8, height/3))
+	if stat, ok := m.selectedRepoStat(); ok && (stat.HasError() || stat.HasSyncWarning() || stat.HasEmptyCloneWarning()) {
+		infoHeight = min(18, max(10, height/2))
+	}
 	branchesHeight := max(7, height-infoHeight-1)
 	ruler := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", width))
 
@@ -75,6 +83,7 @@ func (m Model) viewBranchesTab(width, height int) string {
 	)
 }
 
+// viewReposPanel рисует список репозиториев со статусами синхронизации и HEAD.
 func (m Model) viewReposPanel(width, height int) string {
 	style := panelStyle.Width(width).Height(height)
 	if m.focus == focusRepos {
@@ -145,6 +154,7 @@ func (m Model) viewReposPanel(width, height int) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// viewBranchesPanel рисует список веток и полный текст ошибки загрузки без усечения.
 func (m Model) viewBranchesPanel(width, height int) string {
 	style := panelStyle.Width(width).Height(height)
 	if m.focus == focusBranches {
@@ -176,7 +186,7 @@ func (m Model) viewBranchesPanel(width, height int) string {
 
 	if stat, ok := m.selectedRepoStat(); ok && stat.HasError() {
 		lines = append(lines, errorStyle.Render("Ошибка загрузки веток"))
-		lines = append(lines, truncate(stat.LoadError, max(16, width-4)))
+		lines = append(lines, wrapPrefixed(stat.LoadError, "", max(16, width-4))...)
 		return style.Render(strings.Join(lines, "\n"))
 	}
 
@@ -259,6 +269,7 @@ func (m Model) viewBranchesPanel(width, height int) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// viewStatsPanel рисует инфо-панель: статус Git, полный текст ошибок и состояние оболочки без checkout.
 func (m Model) viewStatsPanel(width, height int) string {
 	style := infoStyle.Width(width).Height(height)
 	innerWidth := width - 4
@@ -304,12 +315,16 @@ func (m Model) viewStatsPanel(width, height int) string {
 		lines = append(lines, "", panelHeaderStyle.Width(innerWidth).Render(" Статус Git "))
 		if stat.HasError() {
 			lines = append(lines, errorStyle.Render("Ошибка доступа к репозиторию"))
-			lines = append(lines, "  "+truncate(stat.LoadError, contentWidth))
+			lines = append(lines, wrapPrefixed(stat.LoadError, "  ", contentWidth)...)
 		} else {
 			lines = append(lines, truncate(fmt.Sprintf("Текущая ветка: %s", valueOrDash(stat.CurrentBranch)), contentWidth))
+			if stat.HasEmptyCloneWarning() {
+				lines = append(lines, warnStyle.Render(truncate("Состояние: репозиторий-оболочка без checkout", contentWidth)))
+				lines = append(lines, wrapPrefixed(stat.Warning.Text(), "  ", contentWidth)...)
+			}
 			if stat.HasSyncWarning() {
 				lines = append(lines, warnStyle.Render(truncate("Синхронизация: предупреждение", contentWidth)))
-				lines = append(lines, "  "+truncate(stat.SyncWarning, contentWidth))
+				lines = append(lines, wrapPrefixed(stat.SyncWarning, "  ", contentWidth)...)
 			}
 			st := stat.DirtyStats
 			if !st.HasChanges() {
@@ -361,7 +376,7 @@ func (m Model) viewStatsPanel(width, height int) string {
 	if m.err != nil {
 		lines = append(lines, "")
 		lines = append(lines, panelHeaderStyle.Width(innerWidth).Render(" Ошибка "))
-		lines = append(lines, truncate(m.err.Error(), max(16, width-4)))
+		lines = append(lines, wrapPrefixed(m.err.Error(), "", max(16, width-4))...)
 	}
 
 	return style.Render(strings.Join(lines, "\n"))

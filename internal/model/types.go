@@ -96,10 +96,12 @@ const (
 	JiraStatusReasonBrowserUnavailableHTTPError        JiraStatusReason = "browser_unavailable_http_error"
 )
 
+// IsRemote сообщает, что ветка относится к удаленному scope.
 func (b BranchInfo) IsRemote() bool {
 	return b.Scope == BranchScopeRemote
 }
 
+// IsLocal сообщает, что ветка относится к локальному scope.
 func (b BranchInfo) IsLocal() bool {
 	return b.Scope == BranchScopeLocal
 }
@@ -109,6 +111,13 @@ type RepoWarning struct {
 	Code    string
 	Message string
 }
+
+const (
+	// RepoWarningRemoteSyncFailed — синхронизация remote не удалась, локальные данные доступны.
+	RepoWarningRemoteSyncFailed = "remote_sync_failed"
+	// RepoWarningEmptyClone — клон без checkout: HEAD не резолвится и нет локальных веток.
+	RepoWarningEmptyClone = "empty_clone"
+)
 
 // Text возвращает человекочитаемое сообщение предупреждения.
 func (w RepoWarning) Text() string {
@@ -129,11 +138,26 @@ type RepoBranches struct {
 	Branches      []BranchInfo
 }
 
+// RepoLoadErrorKind различает причину LoadError для сводки старта TUI.
+type RepoLoadErrorKind string
+
+const (
+	// RepoLoadErrorKindUnknown — неизвестная категория, в сводке «ошибка загрузки».
+	RepoLoadErrorKindUnknown RepoLoadErrorKind = ""
+	// RepoLoadErrorKindNetwork — сбой сети или SSH handshake.
+	RepoLoadErrorKindNetwork RepoLoadErrorKind = "network"
+	// RepoLoadErrorKindLocal — локальный путь или не git-каталог.
+	RepoLoadErrorKindLocal RepoLoadErrorKind = "local"
+	// RepoLoadErrorKindCorrupt — повреждённые git-метаданные.
+	RepoLoadErrorKindCorrupt RepoLoadErrorKind = "corrupt"
+)
+
 // RepoStat хранит базовую информацию о статусе репозитория (для списка).
 type RepoStat struct {
 	CurrentBranch string
 	DirtyStats    DirtyStats
 	LoadError     string
+	LoadErrorKind RepoLoadErrorKind
 	SyncWarning   string
 	Warning       RepoWarning
 	Loaded        bool
@@ -146,7 +170,12 @@ func (s RepoStat) HasError() bool {
 
 // HasSyncWarning возвращает true, если синхронизация remote не удалась, но локальные данные доступны.
 func (s RepoStat) HasSyncWarning() bool {
-	return s.SyncWarning != "" || s.Warning.Message != ""
+	return s.SyncWarning != "" || s.Warning.Code == RepoWarningRemoteSyncFailed
+}
+
+// HasEmptyCloneWarning возвращает true, если репозиторий прочитан как оболочка без checkout.
+func (s RepoStat) HasEmptyCloneWarning() bool {
+	return s.Warning.Code == RepoWarningEmptyClone
 }
 
 // ScriptResult хранит результат генерации скрипта удаления веток.

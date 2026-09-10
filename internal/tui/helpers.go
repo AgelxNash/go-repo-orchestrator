@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
 
@@ -309,6 +310,23 @@ func (m Model) selectedRepoName() string {
 	return m.cfg.Repos[m.repoIdx].Name
 }
 
+// selectRepoByName ставит курсор на репозиторий с указанным именем.
+func (m *Model) selectRepoByName(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for i, repo := range m.cfg.Repos {
+		if repo.Name == name {
+			m.repoIdx = i
+			m.ensureRepoCursorVisible()
+			m.activateSelectedRepoFromCache()
+			return
+		}
+	}
+}
+
+// selectedRepoStat возвращает загруженный статус репозитория под курсором.
 func (m Model) selectedRepoStat() (model.RepoStat, bool) {
 	repoName := m.selectedRepoName()
 	if repoName == "" {
@@ -333,6 +351,7 @@ func (m Model) selectedRepoStat() (model.RepoStat, bool) {
 	return model.RepoStat{}, false
 }
 
+// repoListState возвращает текущую ветку и статус репозитория для списка.
 func (m Model) repoListState(repoName string) (string, string) {
 	branch := "-"
 	status := "Не загружен"
@@ -343,6 +362,9 @@ func (m Model) repoListState(repoName string) (string, string) {
 		}
 		if stat.HasError() {
 			return branch, "Ошибка"
+		}
+		if stat.HasEmptyCloneWarning() {
+			return branch, "Нет HEAD"
 		}
 		if stat.HasSyncWarning() {
 			return branch, "Предупреждение"
@@ -360,10 +382,13 @@ func (m Model) repoListState(repoName string) (string, string) {
 	return branch, status
 }
 
+// renderRepoStatus рисует цветовой маркер статуса репозитория в списке.
 func (m Model) renderRepoStatus(status string) string {
 	switch status {
 	case "Ошибка":
 		return errorStyle.Render("[E]")
+	case "Нет HEAD":
+		return warnStyle.Render("[H]")
 	case "Предупреждение":
 		return warnStyle.Render("[W]")
 	case "Изменения":
@@ -377,10 +402,13 @@ func (m Model) renderRepoStatus(status string) string {
 	}
 }
 
+// repoStatusCode возвращает однобуквенный код статуса репозитория для компактного списка.
 func (m Model) repoStatusCode(status string) string {
 	switch status {
 	case "Ошибка":
 		return "E"
+	case "Нет HEAD":
+		return "H"
 	case "Предупреждение":
 		return "W"
 	case "Изменения":
@@ -503,6 +531,7 @@ func repoSourceLabel(repo config.RepoConfig, ok bool) string {
 	}
 }
 
+// repoSourceCode возвращает короткий код источника репозитория для списка.
 func repoSourceCode(repo config.RepoConfig) string {
 	switch repo.SourceType() {
 	case "path":
@@ -516,6 +545,7 @@ func repoSourceCode(repo config.RepoConfig) string {
 	}
 }
 
+// dirtySummary кратко описывает незакоммиченные изменения рабочего дерева.
 func dirtySummary(st model.DirtyStats) string {
 	return fmt.Sprintf(
 		"изменено:%d добавлено:%d удалено:%d неотслеж:%d",
@@ -526,13 +556,20 @@ func dirtySummary(st model.DirtyStats) string {
 	)
 }
 
+// userFacingError переводит техническую ошибку git/сети в сообщение для TUI, сохраняя исходные детали.
 func userFacingError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, git.ErrEmptyClone) {
+		return err
+	}
 
 	msg := strings.TrimSpace(err.Error())
-	msg = strings.ReplaceAll(msg, "\n", " ")
+	if errors.Is(err, git.ErrTransientNetwork) {
+		details := strings.TrimPrefix(msg, git.ErrTransientNetwork.Error()+": ")
+		return errors.New("хостинг сбросил SSH-соединение или соединение нестабильно (лимит одновременных сессий):\n" + strings.TrimSpace(details))
+	}
 
 	replacements := []struct {
 		from string
@@ -555,16 +592,18 @@ func userFacingError(err error) error {
 
 	lowerMsg := strings.ToLower(msg)
 	switch {
+	case strings.Contains(lowerMsg, "kex_exchange_identification") || strings.Contains(lowerMsg, "connection reset by peer"):
+		return errors.New("хостинг сбросил SSH-соединение или соединение нестабильно (лимит одновременных сессий):\n" + msg)
 	case strings.Contains(lowerMsg, "context deadline exceeded") || strings.Contains(lowerMsg, "operation timed out") || strings.Contains(lowerMsg, "i/o timeout"):
-		msg = "таймаут обращения к удаленному репозиторию: сервер недоступен или отвечает слишком долго"
+		msg = "таймаут обращения к удаленному репозиторию: сервер недоступен или отвечает слишком долго\n" + msg
 	case strings.Contains(lowerMsg, "connection refused"):
-		msg = "удаленный репозиторий недоступен: соединение отклонено"
+		msg = "удаленный репозиторий недоступен: соединение отклонено\n" + msg
 	case strings.Contains(lowerMsg, "no such host") || strings.Contains(lowerMsg, "could not resolve host"):
-		msg = "удаленный репозиторий недоступен: не удалось разрешить хост"
+		msg = "удаленный репозиторий недоступен: не удалось разрешить хост\n" + msg
 	case strings.Contains(lowerMsg, "no route to host"):
-		msg = "удаленный репозиторий недоступен: нет маршрута до хоста"
+		msg = "удаленный репозиторий недоступен: нет маршрута до хоста\n" + msg
 	case strings.Contains(lowerMsg, "permission denied"):
-		msg = "доступ к удаленному репозиторию запрещен (проверьте SSH-ключи/права)"
+		msg = "доступ к удаленному репозиторию запрещен (проверьте SSH-ключи/права)\n" + msg
 	}
 
 	if strings.HasPrefix(msg, "git ") {
@@ -579,6 +618,133 @@ func userFacingError(err error) error {
 	return errors.New(msg)
 }
 
+// classifyRepoLoadError определяет категорию LoadError: сеть, локальный путь или повреждённый Git.
+func classifyRepoLoadError(err error) model.RepoLoadErrorKind {
+	if err == nil {
+		return model.RepoLoadErrorKindUnknown
+	}
+	if errors.Is(err, git.ErrTransientNetwork) {
+		return model.RepoLoadErrorKindNetwork
+	}
+	if errors.Is(err, git.ErrNotGitRepo) {
+		return model.RepoLoadErrorKindLocal
+	}
+
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "kex_exchange_identification"),
+		strings.Contains(msg, "connection reset by peer"),
+		strings.Contains(msg, "context deadline exceeded"),
+		strings.Contains(msg, "operation timed out"),
+		strings.Contains(msg, "i/o timeout"),
+		strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "could not resolve host"),
+		strings.Contains(msg, "no route to host"):
+		return model.RepoLoadErrorKindNetwork
+	case strings.Contains(msg, "corrupt"),
+		strings.Contains(msg, "bad object"),
+		strings.Contains(msg, "packed refs"),
+		strings.Contains(msg, "not a git repository"):
+		return model.RepoLoadErrorKindCorrupt
+	case strings.Contains(msg, "no such file"),
+		strings.Contains(msg, "целевой путь уже существует"),
+		strings.Contains(msg, "открытие репозитория"),
+		strings.Contains(msg, "путь не является git"):
+		return model.RepoLoadErrorKindLocal
+	default:
+		return model.RepoLoadErrorKindUnknown
+	}
+}
+
+// loadErrorSummaryLabel возвращает текст сводки для категории LoadError.
+func loadErrorSummaryLabel(kind model.RepoLoadErrorKind) string {
+	switch kind {
+	case model.RepoLoadErrorKindNetwork:
+		return "синхронизация не удалась (сеть)"
+	case model.RepoLoadErrorKindLocal:
+		return "ошибка загрузки (локальный путь)"
+	case model.RepoLoadErrorKindCorrupt:
+		return "ошибка загрузки (повреждённый Git)"
+	default:
+		return "ошибка загрузки"
+	}
+}
+
+// wrapText переносит текст по ширине, сохраняя существующие переводы строк.
+func wrapText(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if strings.TrimSpace(s) == "" {
+		return []string{s}
+	}
+
+	var lines []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapParagraph(para, width)...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+// wrapParagraph переносит один абзац по ширине, предпочитая разрыв по пробелу.
+func wrapParagraph(s string, width int) []string {
+	runes := []rune(s)
+	if len(runes) <= width {
+		return []string{s}
+	}
+
+	var lines []string
+	for len(runes) > width {
+		cut := width
+		if space := lastSpaceIndex(runes[:width]); space >= width/3 {
+			cut = space
+		}
+		lines = append(lines, string(runes[:cut]))
+		runes = runes[cut:]
+		for len(runes) > 0 && runes[0] == ' ' {
+			runes = runes[1:]
+		}
+	}
+	if len(runes) > 0 {
+		lines = append(lines, string(runes))
+	}
+	return lines
+}
+
+// lastSpaceIndex возвращает индекс последнего пробела в срезе рун или -1.
+func lastSpaceIndex(runes []rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] == ' ' {
+			return i
+		}
+	}
+	return -1
+}
+
+// wrapPrefixed переносит текст по ширине и добавляет префикс к каждой строке.
+func wrapPrefixed(s, prefix string, width int) []string {
+	inner := width - len([]rune(prefix))
+	if inner < 8 {
+		inner = 8
+	}
+	raw := wrapText(s, inner)
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		out = append(out, prefix+line)
+	}
+	return out
+}
+
+// truncate усекает строку до limit рун и добавляет многоточие.
 func truncate(s string, limit int) string {
 	if limit <= 0 {
 		return ""

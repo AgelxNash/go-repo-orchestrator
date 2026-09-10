@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -379,6 +380,77 @@ func TestUpdateOpensourceRepoAutoswitchResetsAndChecksOutBranch(t *testing.T) {
 	}
 	if strings.TrimSpace(string(statusOut)) != "" {
 		t.Fatalf("expected clean working tree after autoswitch, got %q", strings.TrimSpace(string(statusOut)))
+	}
+}
+
+// TestCloneRepoDoesNotRemoveExistingPathOnFailure сохраняет пользовательские файлы при сбое clone.
+func TestCloneRepoDoesNotRemoveExistingPathOnFailure(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "opensource")
+	if err := os.Mkdir(targetPath, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	marker := filepath.Join(targetPath, "keep-me.txt")
+	writeFile(t, marker, "user data\n")
+
+	client := NewClient(time.Second, filepath.Join(dir, "workspace"), WithNetworkRetry(0, time.Millisecond))
+	err := client.cloneRepo(context.Background(), filepath.Join(dir, "missing.git"), targetPath)
+	if err == nil {
+		t.Fatal("expected clone into existing path to fail")
+	}
+	if !strings.Contains(err.Error(), "целевой путь уже существует") {
+		t.Fatalf("expected existing-path error, got %v", err)
+	}
+
+	content, readErr := os.ReadFile(marker)
+	if readErr != nil {
+		t.Fatalf("existing path was removed: %v", readErr)
+	}
+	if strings.TrimSpace(string(content)) != "user data" {
+		t.Fatalf("existing file changed: %q", strings.TrimSpace(string(content)))
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read parent dir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".clone-") {
+			t.Fatalf("temporary clone directory left behind: %s", entry.Name())
+		}
+	}
+}
+
+// TestUpdateOpensourceRepoDoesNotRemoveExistingNonGitPathOnCloneFailure не стирает не-git каталог opensource.
+func TestUpdateOpensourceRepoDoesNotRemoveExistingNonGitPathOnCloneFailure(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "opensource")
+	if err := os.Mkdir(targetPath, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	marker := filepath.Join(targetPath, "keep-me.txt")
+	writeFile(t, marker, "user data\n")
+
+	client := NewClient(time.Second, filepath.Join(dir, "workspace"), WithNetworkRetry(0, time.Millisecond))
+	err := client.UpdateOpensourceRepo(context.Background(), filepath.Join(dir, "missing.git"), targetPath, "")
+	if err == nil {
+		t.Fatal("expected opensource clone into existing path to fail")
+	}
+
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatalf("existing opensource files were removed: %v", statErr)
 	}
 }
 
@@ -818,4 +890,43 @@ func TestDiagnoseRepoStates(t *testing.T) {
 			t.Fatalf("unexpected verdict: %s", diag.VerdictText())
 		}
 	})
+}
+
+// TestCurrentBranchEmptyClone проверяет ErrEmptyClone и warning в GetRepoStat.
+func TestCurrentBranchEmptyClone(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	parent := t.TempDir()
+	seed := filepath.Join(parent, "seed.git")
+	runCmd(t, parent, "git", "init", "-q", "--bare", "-b", "main", seed)
+	src := filepath.Join(parent, "src")
+	runCmd(t, parent, "git", "clone", "-q", seed, src)
+	runCmd(t, src, "git", "config", "user.email", "test@example.com")
+	runCmd(t, src, "git", "config", "user.name", "tester")
+	writeFile(t, filepath.Join(src, "a.txt"), "a\n")
+	runCmd(t, src, "git", "add", "a.txt")
+	runCmd(t, src, "git", "commit", "-q", "-m", "init")
+	runCmd(t, src, "git", "push", "-q", "origin", "main")
+
+	broken := filepath.Join(parent, "broken")
+	runCmd(t, parent, "git", "clone", "-q", seed, broken)
+	runCmd(t, broken, "git", "update-ref", "-d", "refs/heads/main")
+
+	client := NewClient(time.Second, t.TempDir())
+	_, err := client.CurrentBranch(t.Context(), broken)
+	if !errors.Is(err, ErrEmptyClone) {
+		t.Fatalf("expected ErrEmptyClone, got %v", err)
+	}
+
+	stat, err := client.GetRepoStat(t.Context(), broken)
+	if err != nil {
+		t.Fatalf("GetRepoStat should degrade empty clone to warning, got %v", err)
+	}
+	if stat.Warning.Code != model.RepoWarningEmptyClone {
+		t.Fatalf("expected empty clone warning, got %+v", stat)
+	}
 }

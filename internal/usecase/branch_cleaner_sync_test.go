@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/jira"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
@@ -148,6 +149,7 @@ func (f *fakeGitClient) CreateTrackingBranchAndCheckout(ctx context.Context, rep
 	return nil
 }
 
+// TestLoadRepoBranchesOpensourceClonesMissingPathViaUpdateFlow клонирует отсутствующий опенсорс-путь через update.
 func TestLoadRepoBranchesOpensourceClonesMissingPathViaUpdateFlow(t *testing.T) {
 	t.Parallel()
 
@@ -227,6 +229,7 @@ func TestLoadRepoBranchesOpensourceClonesMissingPathViaUpdateFlow(t *testing.T) 
 	}
 }
 
+// TestLoadRepoBranchesOpensourceKeepsLocalDataAndReturnsSyncWarning сохраняет локальные ветки при сбое update.
 func TestLoadRepoBranchesOpensourceKeepsLocalDataAndReturnsSyncWarning(t *testing.T) {
 	t.Parallel()
 
@@ -279,6 +282,49 @@ func TestLoadRepoBranchesOpensourceKeepsLocalDataAndReturnsSyncWarning(t *testin
 	}
 }
 
+// TestLoadRepoBranchesEmptyCloneReturnsWarning проверяет деградацию пустого клона в warning, а не hard error.
+func TestLoadRepoBranchesEmptyCloneReturnsWarning(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return localPath, nil
+		},
+		listBranchesFn: func(_ context.Context, repoPath string) ([]model.BranchInfo, error) {
+			return []model.BranchInfo{{
+				Name:          "main",
+				QualifiedName: "origin/main",
+				Scope:         model.BranchScopeRemote,
+				RemoteName:    "origin",
+			}}, nil
+		},
+		currentBranchFn: func(_ context.Context, repoPath string) (string, error) {
+			return "", git.ErrEmptyClone
+		},
+		detectDefaultBranchFn: func(_ context.Context, repoPath, currentBranch string) (string, error) {
+			return "main", nil
+		},
+	}
+
+	cleaner := NewCleaner(client)
+	repo := config.RepoConfig{Name: "shell", Path: "/tmp/shell"}
+
+	rb, err := cleaner.LoadRepoBranches(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("expected empty clone to load as warning, got error: %v", err)
+	}
+	if rb.Warning.Code != model.RepoWarningEmptyClone {
+		t.Fatalf("expected empty clone warning, got %+v", rb.Warning)
+	}
+	if rb.CurrentBranch != "" {
+		t.Fatalf("expected empty current branch, got %q", rb.CurrentBranch)
+	}
+	if len(rb.Branches) != 1 {
+		t.Fatalf("expected remote branches to remain visible, got %d", len(rb.Branches))
+	}
+}
+
+// TestLoadRepoBranchesOpensourceReturnsErrorWhenUpdateFailsAndNoLocalRepo возвращает ошибку без локального клона.
 func TestLoadRepoBranchesOpensourceReturnsErrorWhenUpdateFailsAndNoLocalRepo(t *testing.T) {
 	t.Parallel()
 

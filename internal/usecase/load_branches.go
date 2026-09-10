@@ -2,8 +2,10 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/jira"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
@@ -14,14 +16,17 @@ func (c *Cleaner) LoadRepoBranches(ctx context.Context, repo config.RepoConfig) 
 	return rb, err
 }
 
+// LoadRepoBranchesWithSummary загружает ветки и возвращает сводку прогресса Jira.
 func (c *Cleaner) LoadRepoBranchesWithSummary(ctx context.Context, repo config.RepoConfig) (model.RepoBranches, RepoLoadSummary, error) {
 	return c.loadRepoBranchesDetailed(ctx, repo, nil)
 }
 
+// LoadRepoBranchesWithProgress загружает ветки и сообщает промежуточный прогресс Jira.
 func (c *Cleaner) LoadRepoBranchesWithProgress(ctx context.Context, repo config.RepoConfig, onProgress RepoLoadProgressCallback) (model.RepoBranches, RepoLoadSummary, error) {
 	return c.loadRepoBranchesDetailed(ctx, repo, onProgress)
 }
 
+// loadRepoBranchesDetailed собирает ветки репозитория и деградирует пустой клон в предупреждение.
 func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.RepoConfig, onProgress RepoLoadProgressCallback) (model.RepoBranches, RepoLoadSummary, error) {
 	managedPath, syncWarning, err := c.resolveRepoForRead(ctx, repo)
 	if err != nil {
@@ -34,8 +39,15 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 	}
 
 	currentBranch, err := c.git.CurrentBranch(ctx, managedPath)
+	emptyClone := false
+	emptyCloneMsg := ""
 	if err != nil {
-		return model.RepoBranches{}, RepoLoadSummary{}, err
+		if !errors.Is(err, git.ErrEmptyClone) {
+			return model.RepoBranches{}, RepoLoadSummary{}, err
+		}
+		emptyClone = true
+		emptyCloneMsg = err.Error()
+		currentBranch = ""
 	}
 
 	defaultBranch, err := c.git.DetectDefaultBranch(ctx, managedPath, currentBranch)
@@ -137,13 +149,21 @@ func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.Repo
 
 	c.logJiraMappingSummary(repo.Name, mappingStats)
 
+	warning := syncWarning
+	if emptyClone {
+		warning = model.RepoWarning{
+			Code:    repoWarningEmptyClone,
+			Message: emptyCloneMsg,
+		}
+	}
+
 	return model.RepoBranches{
 		RepoName:      repo.Name,
 		RepoURL:       repo.URL,
 		RepoSource:    repo.SourceType(),
 		RepoPath:      managedPath,
 		SyncWarning:   syncWarning.Text(),
-		Warning:       syncWarning,
+		Warning:       warning,
 		DefaultBranch: defaultBranch,
 		CurrentBranch: currentBranch,
 		DirtyStats:    dirtyStats,

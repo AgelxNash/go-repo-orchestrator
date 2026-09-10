@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/jira"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 	"github.com/agelxnash/go-repo-orchestrator/internal/usecase"
@@ -79,6 +80,7 @@ func TestCanActivateBranchesBlockedByRepoError(t *testing.T) {
 	}
 }
 
+// TestRepoListStateShowsCurrentBranch показывает текущую ветку в статусе репозитория.
 func TestRepoListStateShowsCurrentBranch(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", Path: "/tmp/repo-a"}},
@@ -98,6 +100,7 @@ func TestRepoListStateShowsCurrentBranch(t *testing.T) {
 	}
 }
 
+// TestRepoListStateShowsWarningForUnsyncedRepo показывает статус «Предупреждение» при сбое remote.
 func TestRepoListStateShowsWarningForUnsyncedRepo(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/repo-a.git"}},
@@ -118,6 +121,48 @@ func TestRepoListStateShowsWarningForUnsyncedRepo(t *testing.T) {
 	}
 }
 
+// TestRepoListStateShowsEmptyClone показывает статус «Нет HEAD» для клона без checkout.
+func TestRepoListStateShowsEmptyClone(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "shell", Path: "/tmp/shell"}},
+	}, nil, false)
+
+	m.repoStats["shell"] = model.RepoStat{
+		Loaded: true,
+		Warning: model.RepoWarning{
+			Code:    model.RepoWarningEmptyClone,
+			Message: "репозиторий-оболочка без checkout: HEAD не резолвится",
+		},
+	}
+
+	_, status := m.repoListState("shell")
+	if status != "Нет HEAD" {
+		t.Fatalf("expected empty clone status, got %q", status)
+	}
+}
+
+// TestCanActivateBranchesAllowsEmptyClone разрешает открыть панель веток у оболочки без checkout.
+func TestCanActivateBranchesAllowsEmptyClone(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "shell", Path: "/tmp/shell"}},
+	}, nil, false)
+
+	m.activeRepo = model.RepoBranches{RepoName: "shell"}
+	m.repoStats["shell"] = model.RepoStat{
+		Loaded: true,
+		Warning: model.RepoWarning{
+			Code:    model.RepoWarningEmptyClone,
+			Message: "репозиторий-оболочка без checkout",
+		},
+	}
+
+	ok, reason := m.canActivateBranches()
+	if !ok {
+		t.Fatalf("expected empty clone to open branches panel, got %q", reason)
+	}
+}
+
+// TestCanActivateBranchesAllowsSyncWarning разрешает вкладку веток при предупреждении синхронизации.
 func TestCanActivateBranchesAllowsSyncWarning(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/repo-a.git"}},
@@ -522,6 +567,7 @@ func TestGlobalRescanBlocksNavigationUntilAllReposComplete(t *testing.T) {
 	}
 }
 
+// TestStartupLoadingBlocksInteractiveInputAndShowsInitScreen блокирует ввод до конца инициализации.
 func TestStartupLoadingBlocksInteractiveInputAndShowsInitScreen(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -551,6 +597,7 @@ func TestStartupLoadingBlocksInteractiveInputAndShowsInitScreen(t *testing.T) {
 	}
 }
 
+// TestStartupLoadingFinishesAfterInitialMessages проверяет снятие startup-блокировки после всех задач.
 func TestStartupLoadingFinishesAfterInitialMessages(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -575,6 +622,7 @@ func TestStartupLoadingFinishesAfterInitialMessages(t *testing.T) {
 	}
 }
 
+// TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete проверяет прогресс URL и итоговую сводку.
 func TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -606,11 +654,135 @@ func TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete(
 	if next.startupLoading {
 		t.Fatal("expected startup loading to be disabled after all startup tasks complete")
 	}
-	if !strings.Contains(next.statusLine, "Первичная синхронизация URL-репозиториев завершена: 2/2") {
+	if !strings.Contains(next.statusLine, "Первичная синхронизация завершена: синхронизировано 2/2") {
 		t.Fatalf("expected startup completion summary, got %q", next.statusLine)
 	}
 }
 
+// TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo проверяет сводку N/M и переход к проблемному репо.
+func TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-a", URL: "https://example.com/a.git"},
+			{Name: "repo-b", URL: "https://example.com/b.git"},
+		},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a", CurrentBranch: "main"},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-b"],
+		repoName:  "repo-b",
+		startup:   true,
+		err:       fmt.Errorf("kex_exchange_identification: read: Connection reset by peer\nfatal: Не удалось прочитать из внешнего репозитория."),
+	})
+	next = updated.(Model)
+
+	if next.startupLoading {
+		t.Fatal("expected startup loading to finish")
+	}
+	if !strings.Contains(next.statusLine, "синхронизировано 1/2") {
+		t.Fatalf("expected synced 1/2 summary, got %q", next.statusLine)
+	}
+	if !strings.Contains(next.statusLine, "1 ошибка (сеть)") {
+		t.Fatalf("expected network error count, got %q", next.statusLine)
+	}
+	if next.selectedRepoName() != "repo-b" {
+		t.Fatalf("expected cursor to jump to failed repo, got %q", next.selectedRepoName())
+	}
+
+	logText := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(logText, "[СВОДКА]") {
+		t.Fatalf("expected summary log line, got %q", logText)
+	}
+	if !strings.Contains(logText, "kex_exchange_identification") {
+		t.Fatalf("expected full fetch error in log, got %q", logText)
+	}
+}
+
+// TestStartupSummaryDoesNotLabelLocalErrorAsNetwork ставит «ошибка загрузки», а не «(сеть)».
+func TestStartupSummaryDoesNotLabelLocalErrorAsNetwork(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-a", Path: "/tmp/repo-a"},
+			{Name: "repo-b", Path: "/tmp/repo-b"},
+		},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a", CurrentBranch: "main"},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-b"],
+		repoName:  "repo-b",
+		startup:   true,
+		err:       fmt.Errorf("открытие репозитория /tmp/repo-b: %w", git.ErrNotGitRepo),
+	})
+	next = updated.(Model)
+
+	if next.startupLoading {
+		t.Fatal("expected startup loading to finish")
+	}
+	if strings.Contains(next.statusLine, "(сеть)") {
+		t.Fatalf("local load error must not be labeled as network, got %q", next.statusLine)
+	}
+	if !strings.Contains(next.statusLine, "1 ошибка загрузки") {
+		t.Fatalf("expected load-error summary, got %q", next.statusLine)
+	}
+	if next.selectedRepoName() != "repo-b" {
+		t.Fatalf("expected cursor to jump to failed repo, got %q", next.selectedRepoName())
+	}
+
+	logText := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(logText, "ошибка загрузки (локальный путь)") {
+		t.Fatalf("expected local load-error log line, got %q", logText)
+	}
+	if strings.Contains(logText, "синхронизация не удалась (сеть)") {
+		t.Fatalf("did not expect network log line, got %q", logText)
+	}
+}
+
+// TestStatsPanelWrapsFullFetchError проверяет, что ИНФО показывает причину SSH handshake.
+func TestStatsPanelWrapsFullFetchError(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
+	}, nil, false)
+	m.width = 64
+	m.height = 36
+	m.repoStats["repo-a"] = model.RepoStat{
+		Loaded: true,
+		LoadError: "хостинг сбросил SSH-соединение или соединение нестабильно (лимит одновременных сессий):\n" +
+			"ошибка git fetch: kex_exchange_identification: read: Connection reset by peer\n" +
+			"fatal: Не удалось прочитать из внешнего репозитория.",
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "kex_exchange_identification") {
+		t.Fatalf("expected handshake cause in info panel, got %q", view)
+	}
+	if strings.Contains(view, "из вне…") && !strings.Contains(view, "Connection reset by peer") {
+		t.Fatalf("expected error not to be truncated before the cause, got %q", view)
+	}
+}
+
+// TestStartupLoadsOpensourceRepoBranchesEvenWhenNotSelected грузит ветки опенсорс-репо вне выбора.
 func TestStartupLoadsOpensourceRepoBranchesEvenWhenNotSelected(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{

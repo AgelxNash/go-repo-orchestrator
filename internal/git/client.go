@@ -22,10 +22,45 @@ import (
 	"github.com/agelxnash/go-repo-orchestrator/internal/workdir"
 )
 
+const (
+	defaultNetworkConcurrency  = 6
+	defaultNetworkMaxRetries   = 2
+	defaultNetworkRetryBackoff = 300 * time.Millisecond
+)
+
+// ClientOption настраивает параметры работы Git-клиента.
+type ClientOption func(*Client)
+
+// WithNetworkConcurrency задает лимит одновременных сетевых операций (fetch/clone/pull).
+func WithNetworkConcurrency(limit int) ClientOption {
+	return func(c *Client) {
+		if limit > 0 {
+			c.networkSem = make(chan struct{}, limit)
+		}
+	}
+}
+
+// WithNetworkRetry настраивает количество повторных попыток и базовую задержку для transient сетевых сбоев.
+func WithNetworkRetry(maxRetries int, backoff time.Duration) ClientOption {
+	return func(c *Client) {
+		if maxRetries >= 0 {
+			c.maxRetries = maxRetries
+		}
+		if backoff > 0 {
+			c.retryBackoff = backoff
+		}
+	}
+}
+
 // Client выполняет git-операции: через go-git по умолчанию и git CLI для bundle/clone/fetch-сценариев.
 type Client struct {
 	timeout      time.Duration
 	workspaceDir string
+	// networkSem ограничивает одновременные clone/fetch/pull (bounded parallelism),
+	// чтобы mass-startup не упирался в sshd MaxStartups. Размер буфера = лимит (по умолчанию 6).
+	networkSem   chan struct{}
+	maxRetries   int
+	retryBackoff time.Duration
 
 	lockMu sync.Mutex
 	locks  map[string]*pathLock
@@ -48,12 +83,21 @@ func (c *Client) ResolveRepoPath(ctx context.Context, repoName, repoURL, localPa
 }
 
 // NewClient создает Git-клиент с таймаутом на каждую команду.
-func NewClient(timeout time.Duration, workspaceDir string) *Client {
-	return &Client{
+func NewClient(timeout time.Duration, workspaceDir string, opts ...ClientOption) *Client {
+	c := &Client{
 		timeout:      timeout,
 		workspaceDir: workspaceDir,
+		networkSem:   make(chan struct{}, defaultNetworkConcurrency),
+		maxRetries:   defaultNetworkMaxRetries,
+		retryBackoff: defaultNetworkRetryBackoff,
 		locks:        make(map[string]*pathLock),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(c)
+		}
+	}
+	return c
 }
 
 // EnsureManagedClone гарантирует наличие managed clone и актуализирует remote refs.
@@ -213,8 +257,13 @@ func (c *Client) FetchAndPull(ctx context.Context, repoPath, repoURL string) err
 		return fmt.Errorf("pull недоступен: для ветки %q не настроен upstream", currentBranch)
 	}
 
-	if _, err := c.runGit(ctx, repoPath, "pull", "--ff-only"); err != nil {
-		return fmt.Errorf("git pull --ff-only: %w", err)
+	if err := c.withNetworkRetry(ctx, func(ctx context.Context) error {
+		if _, err := c.runGit(ctx, repoPath, "pull", "--ff-only"); err != nil {
+			return fmt.Errorf("git pull --ff-only: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	return nil
@@ -435,6 +484,9 @@ func (c *Client) CurrentBranch(ctx context.Context, repoPath string) (string, er
 
 	head, err := repo.Head()
 	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) && isEmptyCloneRepo(repo) {
+			return "", newEmptyCloneError()
+		}
 		return "", fmt.Errorf("определение HEAD: %w", err)
 	}
 
@@ -503,6 +555,15 @@ func (c *Client) GetDirtyStats(ctx context.Context, repoPath string) (model.Dirt
 func (c *Client) GetRepoStat(ctx context.Context, repoPath string) (model.RepoStat, error) {
 	branch, err := c.CurrentBranch(ctx, repoPath)
 	if err != nil {
+		if errors.Is(err, ErrEmptyClone) {
+			return model.RepoStat{
+				Loaded: true,
+				Warning: model.RepoWarning{
+					Code:    model.RepoWarningEmptyClone,
+					Message: err.Error(),
+				},
+			}, nil
+		}
 		return model.RepoStat{}, err
 	}
 
@@ -518,19 +579,60 @@ func (c *Client) GetRepoStat(ctx context.Context, repoPath string) (model.RepoSt
 	}, nil
 }
 
+// cloneRepo клонирует репозиторий в managedPath с ограничением параллелизма и retry.
+// Существующий managedPath не удаляется: клон пишется во временный каталог и
+// перемещается на место только после успеха.
 func (c *Client) cloneRepo(ctx context.Context, repoURL, managedPath string) error {
 	if err := ensureDir(filepath.Dir(managedPath)); err != nil {
 		return err
 	}
-
-	_, err := c.runGit(ctx, "", "clone", repoURL, managedPath)
-	if err != nil {
-		return fmt.Errorf("ошибка клонирования репозитория %q в %q: %w", repoURL, managedPath, err)
+	if err := rejectExistingClonePath(managedPath, repoURL); err != nil {
+		return err
 	}
 
+	return c.withNetworkRetry(ctx, func(ctx context.Context) error {
+		parent := filepath.Dir(managedPath)
+		tmpPath, err := os.MkdirTemp(parent, "."+filepath.Base(managedPath)+".clone-*")
+		if err != nil {
+			return fmt.Errorf("создание временного каталога для клона: %w", err)
+		}
+		cleanup := true
+		defer func() {
+			if cleanup {
+				_ = os.RemoveAll(tmpPath)
+			}
+		}()
+		if err := os.Remove(tmpPath); err != nil {
+			return fmt.Errorf("подготовка временного каталога для клона: %w", err)
+		}
+
+		if _, err := c.runGit(ctx, "", "clone", repoURL, tmpPath); err != nil {
+			return fmt.Errorf("ошибка клонирования репозитория %q в %q: %w", repoURL, managedPath, err)
+		}
+		if err := rejectExistingClonePath(managedPath, repoURL); err != nil {
+			return err
+		}
+		if err := os.Rename(tmpPath, managedPath); err != nil {
+			return fmt.Errorf("перемещение клона в %q: %w", managedPath, err)
+		}
+		cleanup = false
+		return nil
+	})
+}
+
+// rejectExistingClonePath запрещает запись в уже существующий целевой путь клона.
+func rejectExistingClonePath(managedPath, repoURL string) error {
+	_, err := os.Lstat(managedPath)
+	if err == nil {
+		return fmt.Errorf("ошибка клонирования репозитория %q в %q: целевой путь уже существует", repoURL, managedPath)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("проверка целевого пути %q: %w", managedPath, err)
+	}
 	return nil
 }
 
+// ensureOriginURL записывает URL origin, если текущий адрес отличается.
 func (c *Client) ensureOriginURL(ctx context.Context, repoPath, repoURL string) error {
 	stdout, err := c.runGit(ctx, repoPath, "remote", "get-url", "origin")
 	if err != nil {
@@ -549,12 +651,14 @@ func (c *Client) ensureOriginURL(ctx context.Context, repoPath, repoURL string) 
 	return nil
 }
 
+// fetchPrune выполняет git fetch --prune origin с семафором и retry для transient-сбоев.
 func (c *Client) fetchPrune(ctx context.Context, repoPath string) error {
-	if _, err := c.runGit(ctx, repoPath, "fetch", "--prune", "origin"); err != nil {
-		return fmt.Errorf("ошибка fetch --prune origin: %w", err)
-	}
-
-	return nil
+	return c.withNetworkRetry(ctx, func(ctx context.Context) error {
+		if _, err := c.runGit(ctx, repoPath, "fetch", "--prune", "origin"); err != nil {
+			return fmt.Errorf("ошибка fetch --prune origin: %w", err)
+		}
+		return nil
+	})
 }
 
 func (c *Client) seedLocalBranchesFromOrigin(ctx context.Context, repoPath string) error {
@@ -589,6 +693,7 @@ func (c *Client) seedLocalBranchesFromOrigin(ctx context.Context, repoPath strin
 	return nil
 }
 
+// open открывает локальный git-репозиторий по пути.
 func (c *Client) open(repoPath string) (*git.Repository, error) {
 	repo, err := git.PlainOpen(repoPath)
 	if err != nil {
@@ -598,6 +703,7 @@ func (c *Client) open(repoPath string) (*git.Repository, error) {
 	return repo, nil
 }
 
+// commitForRef возвращает объект коммита, на который указывает ссылка.
 func commitForRef(repo *git.Repository, ref *plumbing.Reference) (*object.Commit, error) {
 	commit, err := repo.CommitObject(ref.Hash())
 	if err != nil {
@@ -607,6 +713,7 @@ func commitForRef(repo *git.Repository, ref *plumbing.Reference) (*object.Commit
 	return commit, nil
 }
 
+// runGit запускает git-команду в repoPath и классифицирует ошибку CLI.
 func (c *Client) runGit(parentCtx context.Context, repoPath string, args ...string) (string, error) {
 	execCtx, cancel := c.withCommandTimeout(parentCtx)
 	defer cancel()
@@ -622,22 +729,49 @@ func (c *Client) runGit(parentCtx context.Context, repoPath string, args ...stri
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("таймаут git %s после %s: %w", args[0], c.timeout, err)
-		}
-		if errors.Is(execCtx.Err(), context.Canceled) {
-			return "", fmt.Errorf("git %s отменен: %w", args[0], err)
-		}
-		stderrStr := strings.TrimSpace(stderr.String())
-		if stderrStr == "" {
-			stderrStr = err.Error()
-		}
-		return "", fmt.Errorf("ошибка git %s: %s (%w)", args[0], stderrStr, err)
+		return "", c.classifyGitCommandError(execCtx, args[0], stderr.String(), err)
 	}
 
 	return stdout.String(), nil
 }
 
+// classifyGitCommandError оборачивает сбой git CLI и помечает transient сетевые ошибки.
+func (c *Client) classifyGitCommandError(execCtx context.Context, op, stderr string, runErr error) error {
+	if errors.Is(execCtx.Err(), context.Canceled) {
+		return wrapCanceledGitError(op, runErr, execCtx.Err())
+	}
+	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+		return wrapDeadlineGitError(op, c.timeout, runErr, execCtx.Err())
+	}
+
+	stderrStr := strings.TrimSpace(stderr)
+	if stderrStr == "" && runErr != nil {
+		stderrStr = runErr.Error()
+	}
+	wrapped := fmt.Errorf("ошибка git %s: %s (%w)", op, stderrStr, runErr)
+	if isTransientGitOutput(stderrStr, runErr) {
+		return fmt.Errorf("%w: %w", ErrTransientNetwork, wrapped)
+	}
+	return wrapped
+}
+
+// wrapCanceledGitError пробрасывает context.Canceled и оставляет runErr в диагностическом тексте.
+func wrapCanceledGitError(op string, runErr, ctxErr error) error {
+	if runErr != nil {
+		return fmt.Errorf("git %s отменен: %s: %w", op, runErr.Error(), ctxErr)
+	}
+	return fmt.Errorf("git %s отменен: %w", op, ctxErr)
+}
+
+// wrapDeadlineGitError помечает таймаут как transient и пробрасывает context.DeadlineExceeded.
+func wrapDeadlineGitError(op string, timeout time.Duration, runErr, ctxErr error) error {
+	if runErr != nil {
+		return fmt.Errorf("%w: таймаут git %s после %s: %s: %w", ErrTransientNetwork, op, timeout, runErr.Error(), ctxErr)
+	}
+	return fmt.Errorf("%w: таймаут git %s после %s: %w", ErrTransientNetwork, op, timeout, ctxErr)
+}
+
+// mergeStatus определяет, влита ли ветка в базовую.
 func (c *Client) mergeStatus(ctx context.Context, repoPath, branch, defaultBranch string) (model.MergeStatus, error) {
 	if strings.TrimSpace(defaultBranch) == "" || branch == defaultBranch {
 		return model.MergeStatusUnknown, nil
@@ -658,6 +792,7 @@ func (c *Client) mergeStatus(ctx context.Context, repoPath, branch, defaultBranc
 	return model.MergeStatusUnknown, nil
 }
 
+// resolveBaseBranch возвращает upstream ветки или пустую строку.
 func (c *Client) resolveBaseBranch(ctx context.Context, repoPath, branch string) string {
 	stdout, err := c.runGit(ctx, repoPath, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
 	if err != nil {
@@ -672,6 +807,7 @@ func (c *Client) resolveBaseBranch(ctx context.Context, repoPath, branch string)
 	return upstream
 }
 
+// runGitStatusOnly запускает git-команду без захвата stdout и классифицирует ошибку CLI.
 func (c *Client) runGitStatusOnly(parentCtx context.Context, repoPath string, args ...string) error {
 	execCtx, cancel := c.withCommandTimeout(parentCtx)
 	defer cancel()
@@ -685,17 +821,7 @@ func (c *Client) runGitStatusOnly(parentCtx context.Context, repoPath string, ar
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("таймаут git %s после %s: %w", args[0], c.timeout, err)
-		}
-		if errors.Is(execCtx.Err(), context.Canceled) {
-			return fmt.Errorf("git %s отменен: %w", args[0], err)
-		}
-		stderrStr := strings.TrimSpace(stderr.String())
-		if stderrStr == "" {
-			stderrStr = err.Error()
-		}
-		return fmt.Errorf("ошибка git %s: %s (%w)", args[0], stderrStr, err)
+		return c.classifyGitCommandError(execCtx, args[0], stderr.String(), err)
 	}
 
 	return nil

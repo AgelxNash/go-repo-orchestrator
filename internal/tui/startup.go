@@ -8,16 +8,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
 
+// startInitialLoads запускает первую загрузку репозиториев при старте TUI.
 func (m *Model) startInitialLoads() tea.Cmd {
 	return m.startPreloadPass(true, false)
 }
 
+// startRescanAllRepos перезапускает загрузку всех репозиториев, сохраняя выбор.
 func (m *Model) startRescanAllRepos() tea.Cmd {
 	return m.startPreloadPass(false, true)
 }
 
+// startPreloadPass запускает параллельную загрузку репозиториев при старте или пересканировании.
 func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	if len(m.cfg.Repos) == 0 {
 		return nil
@@ -134,6 +139,7 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// finishStartupTaskIfNeeded уменьшает счетчик startup-задач и показывает сводку по завершении.
 func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 	if !startup || !m.startupLoading {
 		return
@@ -147,12 +153,125 @@ func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 		m.startupCurrentRepo = ""
 		m.startupCurrentStage = "завершено"
 		m.startupStageElapsed = 0
-		if m.startupURLTotal > 0 {
-			m.statusLine = fmt.Sprintf("Первичная синхронизация URL-репозиториев завершена: %d/%d", m.startupURLDone, m.startupURLTotal)
-		}
+		m.applyStartupCompletionSummary()
 	}
 }
 
+// applyStartupCompletionSummary записывает итог загрузки в статус/лог и переходит к проблемному репо.
+func (m *Model) applyStartupCompletionSummary() {
+	summary := m.startupCompletionSummary()
+	m.statusLine = summary.text
+	if summary.logLine != "" {
+		m.pushLog(summary.logLine)
+	}
+	for _, line := range summary.problemLines {
+		m.pushLog(line)
+	}
+	if summary.firstProblem != "" {
+		m.selectRepoByName(summary.firstProblem)
+	}
+}
+
+// startupCompletionSummary описывает итог первичной синхронизации для статус-строки и лога.
+type startupCompletionSummary struct {
+	text         string
+	logLine      string
+	problemLines []string
+	firstProblem string
+}
+
+// startupCompletionSummary считает успешные, кэш, сетевые и прочие ошибки загрузки, клоны без checkout.
+func (m Model) startupCompletionSummary() startupCompletionSummary {
+	total := len(m.cfg.Repos)
+	synced := 0
+	var (
+		networkFailed []string
+		loadFailed    []string
+		cache         []string
+		emptyClones   []string
+	)
+	for _, repo := range m.cfg.Repos {
+		stat := m.repoStats[repo.Name]
+		switch {
+		case stat.HasError():
+			if stat.LoadErrorKind == model.RepoLoadErrorKindNetwork {
+				networkFailed = append(networkFailed, repo.Name)
+			} else {
+				loadFailed = append(loadFailed, repo.Name)
+			}
+		case stat.HasEmptyCloneWarning():
+			emptyClones = append(emptyClones, repo.Name)
+		case stat.HasSyncWarning():
+			cache = append(cache, repo.Name)
+		case stat.Loaded:
+			synced++
+		}
+	}
+
+	parts := []string{fmt.Sprintf("синхронизировано %d/%d", synced, total)}
+	if len(networkFailed) > 0 {
+		parts = append(parts, fmt.Sprintf("%s (сеть)", ruCount(len(networkFailed), "ошибка", "ошибки", "ошибок")))
+	}
+	if len(loadFailed) > 0 {
+		parts = append(parts, fmt.Sprintf("%s загрузки", ruCount(len(loadFailed), "ошибка", "ошибки", "ошибок")))
+	}
+	if len(cache) > 0 {
+		parts = append(parts, fmt.Sprintf("%s из кэша", ruCount(len(cache), "репозиторий", "репозитория", "репозиториев")))
+	}
+	if len(emptyClones) > 0 {
+		parts = append(parts, fmt.Sprintf("%s без checkout", ruCount(len(emptyClones), "репозиторий", "репозитория", "репозиториев")))
+	}
+
+	summary := startupCompletionSummary{
+		text: "Первичная синхронизация завершена: " + strings.Join(parts, ", "),
+	}
+	if len(networkFailed)+len(loadFailed)+len(cache)+len(emptyClones) == 0 {
+		return summary
+	}
+
+	summary.logLine = "[СВОДКА] " + summary.text
+	for _, name := range networkFailed {
+		summary.problemLines = append(summary.problemLines, "[ERR] "+name+": "+loadErrorSummaryLabel(model.RepoLoadErrorKindNetwork))
+	}
+	for _, name := range loadFailed {
+		summary.problemLines = append(summary.problemLines, "[ERR] "+name+": "+loadErrorSummaryLabel(m.repoStats[name].LoadErrorKind))
+	}
+	for _, name := range cache {
+		summary.problemLines = append(summary.problemLines, "[WARN] "+name+": используется кэш, remote не обновлен")
+	}
+	for _, name := range emptyClones {
+		summary.problemLines = append(summary.problemLines, "[WARN] "+name+": репозиторий-оболочка без checkout")
+	}
+	switch {
+	case len(networkFailed) > 0:
+		summary.firstProblem = networkFailed[0]
+	case len(loadFailed) > 0:
+		summary.firstProblem = loadFailed[0]
+	case len(emptyClones) > 0:
+		summary.firstProblem = emptyClones[0]
+	case len(cache) > 0:
+		summary.firstProblem = cache[0]
+	}
+	return summary
+}
+
+// ruCount форматирует число с русской формой существительного (1/2-4/5+).
+func ruCount(n int, one, few, many string) string {
+	nAbs := n % 100
+	n1 := nAbs % 10
+	word := many
+	switch {
+	case nAbs >= 11 && nAbs <= 14:
+		word = many
+	case n1 == 1:
+		word = one
+	case n1 >= 2 && n1 <= 4:
+		word = few
+	}
+	return fmt.Sprintf("%d %s", n, word)
+}
+
+// finishStartupURLTaskIfNeeded учитывает завершение синхронизации URL/opensource-репозитория.
 func (m *Model) finishStartupURLTaskIfNeeded(repoName string, startup bool) {
 	if !startup {
 		return
@@ -330,6 +449,7 @@ func (m *Model) updateStartupCurrentOpFromLog(entry string) {
 	m.setStartupStage("", entry)
 }
 
+// viewStartupScreen рисует экран инициализации со спиннером, прогрессом и логом.
 func (m Model) viewStartupScreen() string {
 	usableW := max(40, m.width-4)
 	usableH := max(12, m.height-2)
@@ -403,6 +523,7 @@ func (m Model) viewStartupScreen() string {
 	)
 }
 
+// startupProgressBar рисует полосу прогресса startup-задач.
 func startupProgressBar(done, total, width int) string {
 	if width <= 0 || total <= 0 {
 		return ""
@@ -413,6 +534,7 @@ func startupProgressBar(done, total, width int) string {
 	return lipgloss.NewStyle().Foreground(mcBrightCyan).Render(bar)
 }
 
+// viewStartupLogPanel рисует прокручиваемый лог загрузки с переносом длинных ошибок.
 func (m Model) viewStartupLogPanel(width, height int) string {
 	logBg := lipgloss.Color("17")
 	logFg := lipgloss.Color("252")
@@ -443,23 +565,26 @@ func (m Model) viewStartupLogPanel(width, height int) string {
 	if len(m.eventLog) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(dimFg).Background(logBg).Render("  (ожидание событий...)"))
 	} else {
-		start := 0
-		if len(m.eventLog) > innerH {
-			start = len(m.eventLog) - innerH
-		}
-		for _, entry := range m.eventLog[start:] {
+		var rendered []string
+		for _, entry := range m.eventLog {
 			var entryFg lipgloss.Color
 			switch {
-			case strings.HasPrefix(entry, "[WARN]") || strings.HasPrefix(entry, "[ERR]"):
+			case strings.HasPrefix(entry, "[WARN]") || strings.HasPrefix(entry, "[ERR]") || strings.HasPrefix(entry, "[СВОДКА]"):
 				entryFg = mcYellow
 			case strings.HasPrefix(entry, "[OK]"), strings.HasPrefix(entry, "[СКРИПТ]"):
 				entryFg = lipgloss.Color("46")
 			default:
 				entryFg = logFg
 			}
-			entryLine := lipgloss.NewStyle().Foreground(entryFg).Background(logBg).Render(truncate("  "+entry, innerW))
-			lines = append(lines, entryLine)
+			for _, wrapped := range wrapPrefixed(entry, "  ", innerW) {
+				rendered = append(rendered, lipgloss.NewStyle().Foreground(entryFg).Background(logBg).Render(wrapped))
+			}
 		}
+		start := 0
+		if len(rendered) > innerH {
+			start = len(rendered) - innerH
+		}
+		lines = append(lines, rendered[start:]...)
 	}
 
 	return st.Render(strings.Join(lines, "\n"))

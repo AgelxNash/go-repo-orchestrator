@@ -49,6 +49,7 @@ func (m Model) handleRepoLoadJiraProgress(msg repoLoadJiraProgressMsg) (tea.Mode
 	return m, waitRepoLoadJiraProgressCmd(msg.repoName, msg.startup, msg.stream)
 }
 
+// handlePlaywrightStartupCompleted фиксирует результат запуска Playwright на старте.
 func (m Model) handlePlaywrightStartupCompleted(msg playwrightStartupCompletedMsg) (tea.Model, tea.Cmd) {
 	m.finishStartupTaskIfNeeded(true)
 	if msg.err != nil {
@@ -71,6 +72,7 @@ func (m Model) handlePlaywrightStartupCompleted(msg playwrightStartupCompletedMs
 	return m, nil
 }
 
+// handleSpinnerTick обновляет спиннер, пока идет загрузка startup, refresh или release.
 func (m Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	if !m.loadingSelectedRepo() && !m.startupLoading && !m.refreshLocked && !m.releaseLoading {
 		return m, nil
@@ -80,6 +82,7 @@ func (m Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleBranchesLoaded применяет результат загрузки веток и учитывает его в сводке startup.
 func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) {
 	m.finishAction(msg.actionKey, msg.actionID)
 	if expectedReqID := m.repoLoadReq[msg.repoName]; expectedReqID != msg.requestID {
@@ -96,18 +99,43 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 	if msg.startup && startupInProgress {
 		m.markStartupRepoDone(msg.repoName)
 	}
-	m.finishStartupTaskIfNeeded(msg.startup)
-	if msg.startup && startupInProgress && m.startupLoading {
-		m.setStartupProgressStatus()
-	}
+
 	friendlyErr := userFacingError(msg.err)
 	if msg.err != nil {
 		stat := model.RepoStat{Loaded: true}
 		if friendlyErr != nil {
 			stat.LoadError = friendlyErr.Error()
+			stat.LoadErrorKind = classifyRepoLoadError(msg.err)
 		}
 		m.repoStats[msg.repoName] = stat
 		delete(m.repoData, msg.repoName)
+	} else {
+		syncWarning := strings.TrimSpace(msg.rb.SyncWarning)
+		if syncWarning != "" {
+			if friendly := userFacingError(errors.New(syncWarning)); friendly != nil {
+				syncWarning = friendly.Error()
+			}
+		}
+		m.repoData[msg.repoName] = msg.rb
+		m.applyAutocheckSelection(msg.repoName, msg.rb.Branches)
+		m.repoStats[msg.repoName] = model.RepoStat{
+			CurrentBranch: msg.rb.CurrentBranch,
+			DirtyStats:    msg.rb.DirtyStats,
+			LoadError:     "",
+			SyncWarning:   syncWarning,
+			Warning:       msg.rb.Warning,
+			Loaded:        true,
+		}
+		m.ensureRepoState(msg.repoName)
+	}
+
+	m.finishStartupTaskIfNeeded(msg.startup)
+	if msg.startup && startupInProgress && m.startupLoading {
+		m.setStartupProgressStatus()
+	}
+
+	if msg.err != nil {
+		stat := m.repoStats[msg.repoName]
 		if msg.repoName == m.selectedRepoName() && (!msg.startup || !startupInProgress) {
 			m.statusLine = fmt.Sprintf("Не удалось загрузить %q: %s", msg.repoName, stat.LoadError)
 		}
@@ -117,22 +145,8 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 		m.activateSelectedRepoFromCache()
 		return m, nil
 	}
-	m.repoData[msg.repoName] = msg.rb
-	m.applyAutocheckSelection(msg.repoName, msg.rb.Branches)
-	syncWarning := strings.TrimSpace(msg.rb.SyncWarning)
-	if syncWarning != "" {
-		if friendly := userFacingError(errors.New(syncWarning)); friendly != nil {
-			syncWarning = friendly.Error()
-		}
-	}
-	m.repoStats[msg.repoName] = model.RepoStat{
-		CurrentBranch: msg.rb.CurrentBranch,
-		DirtyStats:    msg.rb.DirtyStats,
-		LoadError:     "",
-		SyncWarning:   syncWarning,
-		Loaded:        true,
-	}
-	m.ensureRepoState(msg.repoName)
+
+	syncWarning := strings.TrimSpace(m.repoStats[msg.repoName].SyncWarning)
 	m.activateSelectedRepoFromCache()
 	if msg.repoName == m.selectedRepoName() && (!msg.startup || !startupInProgress) {
 		if syncWarning != "" {
@@ -159,6 +173,9 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 		if syncWarning != "" {
 			m.pushLog(fmt.Sprintf("[WARN] %s: использую кэш: %s", msg.repoName, syncWarning))
 		}
+		if msg.rb.Warning.Code == model.RepoWarningEmptyClone {
+			m.pushLog(fmt.Sprintf("[WARN] %s: %s", msg.repoName, msg.rb.Warning.Text()))
+		}
 		m.pushLog(fmt.Sprintf("[OK] %s: синхронизация завершена%s", msg.repoName, msg.syncNote))
 	} else {
 		if len(msg.jiraBatchProgress) > 0 && !msg.jiraProgressStreamed {
@@ -179,10 +196,12 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// handleInitialLoad запускает первичную загрузку репозиториев после Init.
 func (m Model) handleInitialLoad(msg initialLoadMsg) (tea.Model, tea.Cmd) {
 	return m, m.startInitialLoads()
 }
 
+// handleScriptGenerated сохраняет путь сгенерированного скрипта или ошибку генерации.
 func (m Model) handleScriptGenerated(msg scriptGeneratedMsg) (tea.Model, tea.Cmd) {
 	m.confirmType = confirmNone
 	m.err = userFacingError(msg.err)
@@ -196,6 +215,7 @@ func (m Model) handleScriptGenerated(msg scriptGeneratedMsg) (tea.Model, tea.Cmd
 	return m, nil
 }
 
+// handleRepoStatLoaded применяет быстрый статус репозитория и учитывает его в сводке startup.
 func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) {
 	m.finishAction(msg.actionKey, msg.actionID)
 	m.finishRefreshPendingIfNeeded(msg.repoName)
@@ -206,7 +226,6 @@ func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) 
 	if msg.startup && startupInProgress {
 		m.markStartupRepoDone(msg.repoName)
 	}
-	m.finishStartupTaskIfNeeded(msg.startup)
 	stat := msg.stat
 	stat.Loaded = true
 	if strings.TrimSpace(stat.SyncWarning) != "" {
@@ -218,9 +237,11 @@ func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) 
 		friendly := userFacingError(msg.err)
 		if friendly != nil {
 			stat.LoadError = friendly.Error()
+			stat.LoadErrorKind = classifyRepoLoadError(msg.err)
 		}
 	}
 	m.repoStats[msg.repoName] = stat
+	m.finishStartupTaskIfNeeded(msg.startup)
 	if msg.startup && startupInProgress {
 		if stat.LoadError != "" {
 			m.pushLog(fmt.Sprintf("[ERR] %s: статус Git не получен: %s", msg.repoName, stat.LoadError))
