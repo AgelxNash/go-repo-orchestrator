@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/app"
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/jira"
 )
 
@@ -41,6 +43,7 @@ func newDoctorCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
 		Short: "Диагностика интеграций без запуска TUI",
 	}
 	cmd.AddCommand(newDoctorJiraCommand(v, logger))
+	cmd.AddCommand(newDoctorRepoCommand(v, logger))
 	return cmd
 }
 
@@ -248,4 +251,158 @@ func renderDiagnoseResult(out io.Writer, target doctorGroupTarget, result jira.D
 	if result.BodySnippet != "" {
 		writef(out, "Фрагмент тела (санитизировано, до %d байт):\n%s\n", diagnoseBodySnippetBytes, result.BodySnippet)
 	}
+}
+
+func newDoctorRepoCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
+	return &cobra.Command{
+		Use:   "repo <NAME>",
+		Short: "Диагностика загрузки одного репозитория с полным трейсом",
+		Long: "Диагностика репозитория по имени из конфига (без запуска TUI): source-тип, резолвнутый путь\n" +
+			"и база резолва, состояние git (HEAD/ветки/upstream/изменения), для opensource-режима — предупреждение\n" +
+			"об autosync (reset --hard), проба синхронизации fetch --prune с полной ошибкой и вердикт:\n" +
+			"«не тот каталог» / «клон-обрывок без коммитов» / «не git-репозиторий» / «загрузится».",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+				return errors.New("укажите ровно одно имя репозитория, например: doctor repo group/repo")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			out := cmd.OutOrStdout()
+
+			cfg, err := config.LoadFromViper(v)
+			if err != nil {
+				return err
+			}
+
+			repo, found := cfg.RepoByName(name)
+			if !found {
+				return fmt.Errorf("репозиторий %q не найден в конфиге; доступные: %s", name, repoNamesSummary(cfg))
+			}
+
+			runtime, err := newRuntime(v, cfg, logger)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if closeErr := runtime.Close(); closeErr != nil {
+					logger.Warn("playwright shutdown error", zap.Error(closeErr))
+				}
+			}()
+
+			configDir := usedConfigDirValue(v)
+			ctx, cancel := context.WithTimeout(cmd.Context(), diagnoseTimeout)
+			defer cancel()
+
+			diag := runtime.Git.DiagnoseRepo(ctx, repo.Path, true)
+			renderRepoDiagnostics(out, repo, configDir, diag)
+			return nil
+		},
+	}
+}
+
+func repoNamesSummary(cfg *config.Config) string {
+	names := make([]string, 0, len(cfg.Repos))
+	for _, repo := range cfg.Repos {
+		names = append(names, repo.Name)
+	}
+	if len(names) > 15 {
+		return strings.Join(names[:15], ", ") + " …"
+	}
+	return strings.Join(names, ", ")
+}
+
+func usedConfigDirValue(v *viper.Viper) string {
+	configFile := strings.TrimSpace(v.GetString("config"))
+	if configFile == "" {
+		return ""
+	}
+	if dir := filepath.Dir(configFile); dir != "" && dir != "." {
+		return dir
+	}
+	return ""
+}
+
+// sanitizeRepoURL скрывает userinfo из URL, чтобы учетные данные не попали
+// в диагностический вывод.
+func sanitizeRepoURL(raw string) string {
+	if at := strings.Index(raw, "@"); at > 0 {
+		if schemeEnd := strings.Index(raw, "://"); schemeEnd >= 0 && at > schemeEnd {
+			return raw[:schemeEnd+3] + raw[at+1:]
+		}
+	}
+	return raw
+}
+
+func renderRepoDiagnostics(out io.Writer, repo config.RepoConfig, configDir string, diag git.RepoDiagnostics) {
+	writef(out, "Репозиторий-диагностика: %s\n", repo.Name)
+	writef(out, "\n— Конфиг —\n")
+	writef(out, "Источник: %s\n", repo.SourceType())
+	if repo.URL != "" {
+		writef(out, "URL: %s\n", sanitizeRepoURL(repo.URL))
+	}
+	writef(out, "Путь (резолв): %s\n", diag.Path)
+	if configDir != "" {
+		if rel, err := filepath.Rel(configDir, diag.Path); err == nil {
+			writef(out, "Относительно каталога конфига: %s\n", rel)
+		}
+	}
+	if repo.SourceType() == "opensource" {
+		writef(out, "Режим opensource (url+path): при загрузке каталог клонируется при отсутствии и синхронизируется fetch --prune\n")
+		if repo.Branch.Autoswitch != "" {
+			writef(out, "ВНИМАНИЕ: autoswitch=%s — при загрузке применяется git reset --hard HEAD и git clean -fd\n", repo.Branch.Autoswitch)
+		}
+	}
+
+	writef(out, "\n— Каталог и git —\n")
+	writef(out, "Каталог: ")
+	if diag.Exists {
+		writef(out, "существует\n")
+	} else {
+		writef(out, "ОТСУТСТВУЕТ\n")
+	}
+	if diag.IsGit {
+		writef(out, "Git-репозиторий: да")
+		if diag.RootMismatch {
+			writef(out, " (путь — вложенная папка, корень: %s)", diag.RepoRoot)
+		}
+		writef(out, "\n")
+		writef(out, "HEAD: ")
+		if diag.HEADValid {
+			writef(out, "%s (валид)\n", diag.CurrentBranch)
+		} else {
+			writef(out, "невалиден (ветка без коммитов)\n")
+		}
+		writef(out, "Локальных веток: %d, remote-ссылок: %d\n", len(diag.LocalBranches), diag.RemoteRefs)
+		if len(diag.LocalBranches) > 0 {
+			writef(out, "Ветки: %s\n", strings.Join(firstN(diag.LocalBranches, 10), ", "))
+		}
+		if diag.Upstream != "" {
+			writef(out, "Upstream: %s\n", diag.Upstream)
+		} else if diag.HEADValid {
+			writef(out, "Upstream: не настроен\n")
+		}
+		writef(out, "Изменений в рабочем каталоге: %d\n", diag.DirtyFiles)
+	}
+
+	writef(out, "\n— Проба синхронизации —\n")
+	if diag.FetchAttempted {
+		if diag.FetchErr == "" {
+			writef(out, "fetch --prune origin: ok\n")
+		} else {
+			writef(out, "fetch --prune origin: ОШИБКА:\n%s\n", diag.FetchErr)
+		}
+	} else {
+		writef(out, "не выполнялась (нет git-репозитория по пути)\n")
+	}
+
+	writef(out, "Вердикт: %s\n", diag.VerdictText())
+}
+
+func firstN(items []string, n int) []string {
+	if len(items) <= n {
+		return items
+	}
+	return append(items[:n:n], "…")
 }
