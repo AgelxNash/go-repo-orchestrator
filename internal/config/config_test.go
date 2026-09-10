@@ -958,3 +958,81 @@ func TestRunCommandIgnoresForeignGitDir(t *testing.T) {
 		t.Fatalf("expected git dir %q, got %q", want, strings.TrimSpace(string(got)))
 	}
 }
+
+// TestLoadResolvesRelativePathAgainstConfigDir проверяет, что относительный
+// repos[].path резолвится от каталога файла конфигурации, а не от CWD процесса
+// (issue #67): запуск из другого каталога не должен уводить пути в сторону.
+func TestLoadResolvesRelativePathAgainstConfigDir(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "kd-developers")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoDir := filepath.Join(root, "b2b", "portal")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := filepath.Join(configDir, "git.yaml")
+	raw := "repos:\n  - name: portal\n    url: git@example.com:group/portal.git\n    path: ../b2b/portal\n"
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(elsewhere)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Repos[0].Path != repoDir {
+		t.Fatalf("expected path resolved against config dir %q, got %q", repoDir, cfg.Repos[0].Path)
+	}
+}
+
+// TestLoadKeepsAbsolutePathUntouched проверяет, что абсолютный repos[].path
+// не переносится относительно каталога конфига.
+func TestLoadKeepsAbsolutePathUntouched(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "abs-repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "conf.yaml")
+	raw := "repos:\n  - name: abs\n    path: " + repoDir + "\n"
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(t.TempDir())
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Repos[0].Path != repoDir {
+		t.Fatalf("expected absolute path %q, got %q", repoDir, cfg.Repos[0].Path)
+	}
+}
+
+// TestResolveRepoPathFallsBackToCWDWithoutConfig проверяет сохранение прежней
+// семантики (резолв от CWD), когда файл конфигурации неизвестен.
+func TestResolveRepoPathFallsBackToCWDWithoutConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	got, err := resolveRepoPath("relative/repo", "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(wd, "relative", "repo"); got != want {
+		t.Fatalf("expected CWD-resolved %q, got %q", want, got)
+	}
+}

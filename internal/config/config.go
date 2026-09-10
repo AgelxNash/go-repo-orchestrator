@@ -169,12 +169,48 @@ func Load(path string) (*Config, error) {
 
 	v := viper.New()
 	v.SetConfigType("yaml")
+	v.Set("config", path)
 
 	if err := v.ReadConfig(bytes.NewReader(expanded)); err != nil {
 		return nil, fmt.Errorf("прочитать конфиг: %w", err)
 	}
 
 	return LoadFromViper(v)
+}
+
+// usedConfigDir возвращает каталог файла конфигурации (базу для резолва
+// относительных repos[].path). Источники: ключ "config" (флаг --config / Load),
+// затем ConfigFileUsed viper'а. Пустая строка — файл неизвестен.
+func usedConfigDir(v *viper.Viper) string {
+	configFile := strings.TrimSpace(v.GetString("config"))
+	if configFile == "" {
+		configFile = strings.TrimSpace(v.ConfigFileUsed())
+	}
+	if configFile == "" {
+		return ""
+	}
+	if dir := filepath.Dir(configFile); dir != "" && dir != "." {
+		return dir
+	}
+	return ""
+}
+
+// resolveRepoPath приводит repos[].path к абсолютному: относительный путь
+// резолвится от каталога файла конфигурации (а не от CWD процесса), чтобы
+// поведение конфига не зависело от точки запуска (issue #67). Если файл
+// конфигурации неизвестен, сохраняется прежняя семантика — резолв от CWD.
+func resolveRepoPath(rawPath, configDir string) (string, error) {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(rawPath) {
+		return filepath.Clean(rawPath), nil
+	}
+	if configDir != "" {
+		return filepath.Abs(filepath.Join(configDir, rawPath))
+	}
+	return filepath.Abs(rawPath)
 }
 
 // LoadFromViper загружает типизированный конфиг из экземпляра viper.
@@ -185,6 +221,8 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 	if err := validateConfigFileKeys(v); err != nil {
 		return nil, err
 	}
+
+	configDir := usedConfigDir(v)
 
 	var raw struct {
 		Jira       []JiraConfig  `mapstructure:"jira"`
@@ -250,7 +288,7 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 			if err := validateRepoURL(repo.URL); err != nil {
 				return nil, fmt.Errorf("repo[%s]: некорректный url: %w", repo.Name, err)
 			}
-			absPath, err := filepath.Abs(repo.Path)
+			absPath, err := resolveRepoPath(repo.Path, configDir)
 			if err != nil {
 				return nil, fmt.Errorf("repo[%s]: определить path: %w", repo.Name, err)
 			}
@@ -260,7 +298,7 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 				return nil, fmt.Errorf("repo[%s]: некорректный url: %w", repo.Name, err)
 			}
 		case hasPath:
-			absPath, err := filepath.Abs(repo.Path)
+			absPath, err := resolveRepoPath(repo.Path, configDir)
 			if err != nil {
 				return nil, fmt.Errorf("repo[%s]: определить path: %w", repo.Name, err)
 			}
