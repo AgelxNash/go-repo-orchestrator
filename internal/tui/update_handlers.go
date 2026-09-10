@@ -105,6 +105,7 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 		stat := model.RepoStat{Loaded: true}
 		if friendlyErr != nil {
 			stat.LoadError = friendlyErr.Error()
+			stat.LoadErrorKind = classifyRepoLoadError(msg.err)
 		}
 		m.repoStats[msg.repoName] = stat
 		delete(m.repoData, msg.repoName)
@@ -236,6 +237,7 @@ func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) 
 		friendly := userFacingError(msg.err)
 		if friendly != nil {
 			stat.LoadError = friendly.Error()
+			stat.LoadErrorKind = classifyRepoLoadError(msg.err)
 		}
 	}
 	m.repoStats[msg.repoName] = stat

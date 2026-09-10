@@ -70,10 +70,7 @@ func (c *Client) withNetworkRetry(ctx context.Context, op func(context.Context) 
 			select {
 			case <-ctxOrBackground(ctx).Done():
 				timer.Stop()
-				if lastErr != nil {
-					return lastErr
-				}
-				return ctxOrBackground(ctx).Err()
+				return canceledNetworkError(ctx, lastErr)
 			case <-timer.C:
 			}
 		}
@@ -85,7 +82,7 @@ func (c *Client) withNetworkRetry(ctx context.Context, op func(context.Context) 
 			return nil
 		}
 		if ctxOrBackground(ctx).Err() != nil {
-			return lastErr
+			return canceledNetworkError(ctx, lastErr)
 		}
 		if !isTransientNetworkError(lastErr) {
 			return lastErr
@@ -93,6 +90,18 @@ func (c *Client) withNetworkRetry(ctx context.Context, op func(context.Context) 
 	}
 
 	return lastErr
+}
+
+// canceledNetworkError возвращает ошибку отмены контекста, сохраняя lastErr только в тексте.
+func canceledNetworkError(ctx context.Context, lastErr error) error {
+	ctxErr := ctxOrBackground(ctx).Err()
+	if ctxErr == nil {
+		return lastErr
+	}
+	if lastErr == nil || errors.Is(lastErr, ctxErr) {
+		return ctxErr
+	}
+	return fmt.Errorf("%w: %s", ctxErr, lastErr.Error())
 }
 
 // isTransientNetworkError сообщает, что ошибка относится к повторно пробуемому сетевому сбою.

@@ -138,11 +138,26 @@ type RepoBranches struct {
 	Branches      []BranchInfo
 }
 
+// RepoLoadErrorKind различает причину LoadError для сводки старта TUI.
+type RepoLoadErrorKind string
+
+const (
+	// RepoLoadErrorKindUnknown — неизвестная категория, в сводке «ошибка загрузки».
+	RepoLoadErrorKindUnknown RepoLoadErrorKind = ""
+	// RepoLoadErrorKindNetwork — сбой сети или SSH handshake.
+	RepoLoadErrorKindNetwork RepoLoadErrorKind = "network"
+	// RepoLoadErrorKindLocal — локальный путь или не git-каталог.
+	RepoLoadErrorKindLocal RepoLoadErrorKind = "local"
+	// RepoLoadErrorKindCorrupt — повреждённые git-метаданные.
+	RepoLoadErrorKindCorrupt RepoLoadErrorKind = "corrupt"
+)
+
 // RepoStat хранит базовую информацию о статусе репозитория (для списка).
 type RepoStat struct {
 	CurrentBranch string
 	DirtyStats    DirtyStats
 	LoadError     string
+	LoadErrorKind RepoLoadErrorKind
 	SyncWarning   string
 	Warning       RepoWarning
 	Loaded        bool

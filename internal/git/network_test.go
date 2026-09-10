@@ -143,3 +143,69 @@ func TestWithNetworkConcurrencyOptionIgnoredWhenNonPositive(t *testing.T) {
 		t.Fatalf("expected default concurrency %d, got %d", defaultNetworkConcurrency, cap(client.networkSem))
 	}
 }
+
+// TestWithNetworkRetryReturnsContextErrorOnCancelDuringBackoff не подменяет отмену предыдущей transient-ошибкой.
+func TestWithNetworkRetryReturnsContextErrorOnCancelDuringBackoff(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(time.Second, t.TempDir(), WithNetworkRetry(2, 300*time.Millisecond))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	var calls atomic.Int32
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.withNetworkRetry(ctx, func(context.Context) error {
+			if calls.Add(1) == 1 {
+				go func() {
+					time.Sleep(20 * time.Millisecond)
+					cancel()
+				}()
+			}
+			return fmt.Errorf("%w: kex_exchange_identification", ErrTransientNetwork)
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("withNetworkRetry did not return after cancel during backoff")
+	}
+}
+
+// TestWithNetworkRetryReturnsContextErrorAfterCanceledAttempt возвращает ctx.Err() после отменённой попытки.
+func TestWithNetworkRetryReturnsContextErrorAfterCanceledAttempt(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(time.Second, t.TempDir(), WithNetworkRetry(2, time.Millisecond))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	err := client.withNetworkRetry(ctx, func(context.Context) error {
+		cancel()
+		return fmt.Errorf("%w: kex_exchange_identification", ErrTransientNetwork)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestClassifyGitCommandErrorWrapsContextCanceled пробрасывает context.Canceled, оставляя runErr в тексте.
+func TestClassifyGitCommandErrorWrapsContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(time.Second, t.TempDir())
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := client.classifyGitCommandError(ctx, "clone", "", errors.New("signal: killed"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "signal: killed") {
+		t.Fatalf("expected diagnostic runErr text, got %v", err)
+	}
+}

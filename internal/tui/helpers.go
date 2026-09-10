@@ -618,6 +618,59 @@ func userFacingError(err error) error {
 	return errors.New(msg)
 }
 
+// classifyRepoLoadError определяет категорию LoadError: сеть, локальный путь или повреждённый Git.
+func classifyRepoLoadError(err error) model.RepoLoadErrorKind {
+	if err == nil {
+		return model.RepoLoadErrorKindUnknown
+	}
+	if errors.Is(err, git.ErrTransientNetwork) {
+		return model.RepoLoadErrorKindNetwork
+	}
+	if errors.Is(err, git.ErrNotGitRepo) {
+		return model.RepoLoadErrorKindLocal
+	}
+
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "kex_exchange_identification"),
+		strings.Contains(msg, "connection reset by peer"),
+		strings.Contains(msg, "context deadline exceeded"),
+		strings.Contains(msg, "operation timed out"),
+		strings.Contains(msg, "i/o timeout"),
+		strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "could not resolve host"),
+		strings.Contains(msg, "no route to host"):
+		return model.RepoLoadErrorKindNetwork
+	case strings.Contains(msg, "corrupt"),
+		strings.Contains(msg, "bad object"),
+		strings.Contains(msg, "packed refs"),
+		strings.Contains(msg, "not a git repository"):
+		return model.RepoLoadErrorKindCorrupt
+	case strings.Contains(msg, "no such file"),
+		strings.Contains(msg, "целевой путь уже существует"),
+		strings.Contains(msg, "открытие репозитория"),
+		strings.Contains(msg, "путь не является git"):
+		return model.RepoLoadErrorKindLocal
+	default:
+		return model.RepoLoadErrorKindUnknown
+	}
+}
+
+// loadErrorSummaryLabel возвращает текст сводки для категории LoadError.
+func loadErrorSummaryLabel(kind model.RepoLoadErrorKind) string {
+	switch kind {
+	case model.RepoLoadErrorKindNetwork:
+		return "синхронизация не удалась (сеть)"
+	case model.RepoLoadErrorKindLocal:
+		return "ошибка загрузки (локальный путь)"
+	case model.RepoLoadErrorKindCorrupt:
+		return "ошибка загрузки (повреждённый Git)"
+	default:
+		return "ошибка загрузки"
+	}
+}
+
 // wrapText переносит текст по ширине, сохраняя существующие переводы строк.
 func wrapText(s string, width int) []string {
 	if width < 1 {

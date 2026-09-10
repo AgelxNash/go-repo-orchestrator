@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 )
 
 // startInitialLoads запускает первую загрузку репозиториев при старте TUI.
@@ -178,20 +180,25 @@ type startupCompletionSummary struct {
 	firstProblem string
 }
 
-// startupCompletionSummary считает успешные, кэш, сетевые ошибки и клоны без checkout.
+// startupCompletionSummary считает успешные, кэш, сетевые и прочие ошибки загрузки, клоны без checkout.
 func (m Model) startupCompletionSummary() startupCompletionSummary {
 	total := len(m.cfg.Repos)
 	synced := 0
 	var (
-		failed      []string
-		cache       []string
-		emptyClones []string
+		networkFailed []string
+		loadFailed    []string
+		cache         []string
+		emptyClones   []string
 	)
 	for _, repo := range m.cfg.Repos {
 		stat := m.repoStats[repo.Name]
 		switch {
 		case stat.HasError():
-			failed = append(failed, repo.Name)
+			if stat.LoadErrorKind == model.RepoLoadErrorKindNetwork {
+				networkFailed = append(networkFailed, repo.Name)
+			} else {
+				loadFailed = append(loadFailed, repo.Name)
+			}
 		case stat.HasEmptyCloneWarning():
 			emptyClones = append(emptyClones, repo.Name)
 		case stat.HasSyncWarning():
@@ -202,8 +209,11 @@ func (m Model) startupCompletionSummary() startupCompletionSummary {
 	}
 
 	parts := []string{fmt.Sprintf("синхронизировано %d/%d", synced, total)}
-	if len(failed) > 0 {
-		parts = append(parts, fmt.Sprintf("%s (сеть)", ruCount(len(failed), "ошибка", "ошибки", "ошибок")))
+	if len(networkFailed) > 0 {
+		parts = append(parts, fmt.Sprintf("%s (сеть)", ruCount(len(networkFailed), "ошибка", "ошибки", "ошибок")))
+	}
+	if len(loadFailed) > 0 {
+		parts = append(parts, fmt.Sprintf("%s загрузки", ruCount(len(loadFailed), "ошибка", "ошибки", "ошибок")))
 	}
 	if len(cache) > 0 {
 		parts = append(parts, fmt.Sprintf("%s из кэша", ruCount(len(cache), "репозиторий", "репозитория", "репозиториев")))
@@ -215,13 +225,16 @@ func (m Model) startupCompletionSummary() startupCompletionSummary {
 	summary := startupCompletionSummary{
 		text: "Первичная синхронизация завершена: " + strings.Join(parts, ", "),
 	}
-	if len(failed)+len(cache)+len(emptyClones) == 0 {
+	if len(networkFailed)+len(loadFailed)+len(cache)+len(emptyClones) == 0 {
 		return summary
 	}
 
 	summary.logLine = "[СВОДКА] " + summary.text
-	for _, name := range failed {
-		summary.problemLines = append(summary.problemLines, "[ERR] "+name+": синхронизация не удалась (сеть)")
+	for _, name := range networkFailed {
+		summary.problemLines = append(summary.problemLines, "[ERR] "+name+": "+loadErrorSummaryLabel(model.RepoLoadErrorKindNetwork))
+	}
+	for _, name := range loadFailed {
+		summary.problemLines = append(summary.problemLines, "[ERR] "+name+": "+loadErrorSummaryLabel(m.repoStats[name].LoadErrorKind))
 	}
 	for _, name := range cache {
 		summary.problemLines = append(summary.problemLines, "[WARN] "+name+": используется кэш, remote не обновлен")
@@ -230,8 +243,10 @@ func (m Model) startupCompletionSummary() startupCompletionSummary {
 		summary.problemLines = append(summary.problemLines, "[WARN] "+name+": репозиторий-оболочка без checkout")
 	}
 	switch {
-	case len(failed) > 0:
-		summary.firstProblem = failed[0]
+	case len(networkFailed) > 0:
+		summary.firstProblem = networkFailed[0]
+	case len(loadFailed) > 0:
+		summary.firstProblem = loadFailed[0]
 	case len(emptyClones) > 0:
 		summary.firstProblem = emptyClones[0]
 	case len(cache) > 0:

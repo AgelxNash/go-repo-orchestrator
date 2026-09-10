@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
+	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 	"github.com/agelxnash/go-repo-orchestrator/internal/jira"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
 	"github.com/agelxnash/go-repo-orchestrator/internal/usecase"
@@ -705,6 +706,56 @@ func TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo(t *testing.T) {
 	}
 	if !strings.Contains(logText, "kex_exchange_identification") {
 		t.Fatalf("expected full fetch error in log, got %q", logText)
+	}
+}
+
+// TestStartupSummaryDoesNotLabelLocalErrorAsNetwork ставит «ошибка загрузки», а не «(сеть)».
+func TestStartupSummaryDoesNotLabelLocalErrorAsNetwork(t *testing.T) {
+	m := NewModel(&config.Config{
+		Repos: []config.RepoConfig{
+			{Name: "repo-a", Path: "/tmp/repo-a"},
+			{Name: "repo-b", Path: "/tmp/repo-b"},
+		},
+	}, nil, false)
+
+	updated, _ := m.Update(initialLoadMsg{})
+	next := updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-a"],
+		repoName:  "repo-a",
+		startup:   true,
+		rb:        model.RepoBranches{RepoName: "repo-a", CurrentBranch: "main"},
+	})
+	next = updated.(Model)
+
+	updated, _ = next.Update(branchesLoadedMsg{
+		requestID: next.repoLoadReq["repo-b"],
+		repoName:  "repo-b",
+		startup:   true,
+		err:       fmt.Errorf("открытие репозитория /tmp/repo-b: %w", git.ErrNotGitRepo),
+	})
+	next = updated.(Model)
+
+	if next.startupLoading {
+		t.Fatal("expected startup loading to finish")
+	}
+	if strings.Contains(next.statusLine, "(сеть)") {
+		t.Fatalf("local load error must not be labeled as network, got %q", next.statusLine)
+	}
+	if !strings.Contains(next.statusLine, "1 ошибка загрузки") {
+		t.Fatalf("expected load-error summary, got %q", next.statusLine)
+	}
+	if next.selectedRepoName() != "repo-b" {
+		t.Fatalf("expected cursor to jump to failed repo, got %q", next.selectedRepoName())
+	}
+
+	logText := strings.Join(next.eventLog, "\n")
+	if !strings.Contains(logText, "ошибка загрузки (локальный путь)") {
+		t.Fatalf("expected local load-error log line, got %q", logText)
+	}
+	if strings.Contains(logText, "синхронизация не удалась (сеть)") {
+		t.Fatalf("did not expect network log line, got %q", logText)
 	}
 }
 
