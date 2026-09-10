@@ -10,3 +10,33 @@ config.yaml
 /internal/usecase/git-branch-cleaner-*-delete-*.bat
 /internal/usecase/go-repo-orchestrator-*-delete-*.sh
 /internal/usecase/go-repo-orchestrator-*-delete-*.bat
+
+.idea/
+.vscode/
+.opencode/
+.zcode/
+.cursor/
+.claude/
+.playwright-mcp/
+
+# AI context is local by default
+ai-context/*
+
+# Shared context
+!ai-context/.gitignore
+!ai-context/docs/
+!ai-context/docs/**
+!ai-context/docs-index.md
+!ai-context/adr/
+!ai-context/adr/**
+!ai-context/adr-index.md
+
+!/ai-context/artifacts/
+/ai-context/artifacts/*
+!/ai-context/artifacts/.gitkeep
+!/ai-context/notes/
+/ai-context/notes/*
+!/ai-context/notes/.gitkeep
+!/ai-context/tasks/
+/ai-context/tasks/*
+!/ai-context/tasks/.gitkeep
