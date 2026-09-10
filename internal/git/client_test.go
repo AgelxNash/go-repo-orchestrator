@@ -719,3 +719,103 @@ func TestRunCmdIgnoresForeignGitDir(t *testing.T) {
 		t.Fatalf("expected git dir %q, got %q", want, strings.TrimSpace(string(got)))
 	}
 }
+
+// TestDiagnoseRepoStates проверяет диагностические срезы для основных
+// состояний пути: отсутствует, не git, ок-репозиторий, вложенная папка,
+// клон-обрывок без коммитов (issue #68).
+func TestDiagnoseRepoStates(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	ctx := context.Background()
+	client := NewClient(time.Second, t.TempDir())
+
+	t.Run("каталог отсутствует", func(t *testing.T) {
+		t.Parallel()
+		diag := client.DiagnoseRepo(ctx, filepath.Join(t.TempDir(), "missing"), false)
+		if diag.Exists || diag.IsGit {
+			t.Fatalf("expected missing dir, got %+v", diag)
+		}
+		if !strings.Contains(diag.VerdictText(), "не существует") {
+			t.Fatalf("unexpected verdict: %s", diag.VerdictText())
+		}
+	})
+
+	t.Run("не git-каталог", func(t *testing.T) {
+		t.Parallel()
+		diag := client.DiagnoseRepo(ctx, t.TempDir(), false)
+		if diag.Exists != true || diag.IsGit {
+			t.Fatalf("expected non-git dir, got %+v", diag)
+		}
+		if !strings.Contains(diag.VerdictText(), "не является git-репозиторием") {
+			t.Fatalf("unexpected verdict: %s", diag.VerdictText())
+		}
+	})
+
+	t.Run("ок-репозиторий", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		runCmd(t, dir, "git", "init", "-q", "-b", "main", ".")
+		runCmd(t, dir, "git", "config", "user.email", "test@example.com")
+		runCmd(t, dir, "git", "config", "user.name", "tester")
+		writeFile(t, filepath.Join(dir, "README.md"), "x\n")
+		runCmd(t, dir, "git", "add", "README.md")
+		runCmd(t, dir, "git", "commit", "-q", "-m", "init")
+
+		diag := client.DiagnoseRepo(ctx, dir, false)
+		if !diag.HEADValid || diag.CurrentBranch != "main" || len(diag.LocalBranches) != 1 || diag.RootMismatch {
+			t.Fatalf("expected healthy repo, got %+v", diag)
+		}
+		if !strings.Contains(diag.VerdictText(), "загрузится") {
+			t.Fatalf("unexpected verdict: %s", diag.VerdictText())
+		}
+	})
+
+	t.Run("вложенная папка репозитория", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		runCmd(t, dir, "git", "init", "-q", ".")
+		nested := filepath.Join(dir, "sub")
+		if err := os.MkdirAll(nested, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		diag := client.DiagnoseRepo(ctx, nested, false)
+		if !diag.IsGit || !diag.RootMismatch {
+			t.Fatalf("expected nested mismatch, got %+v", diag)
+		}
+		if !strings.Contains(diag.VerdictText(), "вложенная папка") {
+			t.Fatalf("unexpected verdict: %s", diag.VerdictText())
+		}
+	})
+
+	t.Run("клон-обрывок без коммитов", func(t *testing.T) {
+		t.Parallel()
+		parent := t.TempDir()
+		seed := filepath.Join(parent, "seed.git")
+		runCmd(t, parent, "git", "init", "-q", "--bare", "-b", "main", seed)
+		src := filepath.Join(parent, "src")
+		runCmd(t, parent, "git", "clone", "-q", seed, src)
+		runCmd(t, src, "git", "config", "user.email", "test@example.com")
+		runCmd(t, src, "git", "config", "user.name", "tester")
+		writeFile(t, filepath.Join(src, "a.txt"), "a\n")
+		runCmd(t, src, "git", "add", "a.txt")
+		runCmd(t, src, "git", "commit", "-q", "-m", "init")
+		runCmd(t, src, "git", "push", "-q", "origin", "main")
+
+		broken := filepath.Join(parent, "broken")
+		runCmd(t, parent, "git", "clone", "-q", seed, broken)
+		runCmd(t, broken, "git", "update-ref", "-d", "refs/heads/main")
+
+		diag := client.DiagnoseRepo(ctx, broken, false)
+		if diag.HEADValid || diag.RemoteRefs == 0 {
+			t.Fatalf("expected broken clone, got %+v", diag)
+		}
+		if !strings.Contains(diag.VerdictText(), "обрывок") {
+			t.Fatalf("unexpected verdict: %s", diag.VerdictText())
+		}
+	})
+}
