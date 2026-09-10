@@ -18,6 +18,8 @@ const defaultStatusTimeout = 5 * time.Second
 const defaultTransientStatusTTL = 15 * time.Second
 const maxTransientStatusTTL = 2 * time.Minute
 const jiraSearchBatchSize = 500
+const maxJiraResponseBytes = 4 << 20
+const maxJiraReleasePages = 1000
 
 type StatusBatchRequest struct {
 	Group       string
@@ -42,7 +44,7 @@ type httpDoer interface {
 }
 
 type browserRequester interface {
-	RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error)
+	RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, string, error)
 }
 
 type groupTransport string
@@ -88,7 +90,7 @@ func NewStatusService(timeout time.Duration, opts ...StatusServiceOption) *Statu
 	}
 
 	svc := &StatusService{
-		httpClient:     &http.Client{Timeout: timeout},
+		httpClient:     newJiraHTTPClient(timeout, nil),
 		groups:         make(map[string]groupSettings),
 		cache:          make(map[string]cacheEntry),
 		fallbackWarned: make(map[string]bool),

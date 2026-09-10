@@ -18,6 +18,7 @@ type Runtime struct {
 	Git        *git.Client
 	Cleaner    *usecase.Cleaner
 	Playwright *browser.PlaywrightRuntime
+	Jira       *jira.StatusService
 }
 
 // jiraHTTPTimeout — таймаут HTTP-запросов к Jira (общий и per-group mTLS-клиенты).
@@ -56,6 +57,7 @@ func NewRuntime(stateDir, workspaceDir string, gitTimeout time.Duration, browser
 		Git:        gitClient,
 		Cleaner:    cleaner,
 		Playwright: playwrightRuntime,
+		Jira:       statusService,
 	}, nil
 }
 

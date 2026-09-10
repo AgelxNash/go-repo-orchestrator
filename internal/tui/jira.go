@@ -154,6 +154,8 @@ func (m Model) jiraReasonLabel(branch model.BranchInfo) string {
 		return "ошибка транспорта"
 	case model.JiraStatusReasonResponseParseErr:
 		return "некорректный JSON-ответ Jira"
+	case model.JiraStatusReasonResponseTooLarge:
+		return "ответ Jira превышает лимит размера"
 	case model.JiraStatusReasonBrowserUnavailableHTTPFallback:
 		return "browser недоступен, использован HTTP fallback"
 	case model.JiraStatusReasonBrowserUnavailableHTTPAuthRequired:
