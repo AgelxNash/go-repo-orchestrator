@@ -107,7 +107,19 @@ func TestPlaywrightRuntimeStartWrapsError(t *testing.T) {
 func TestPlaywrightRuntimeUsesCDPModeWhenConfigured(t *testing.T) {
 	t.Parallel()
 
-	const cdpURL = "http://127.0.0.1:9222"
+	// Preflight блокирующий: cdpURL обязан отвечать на /json/version,
+	// поэтому тест поднимает собственный loopback-фейк вместо порта 9222
+	// (на машине разработчика там может жить реальный Chromium с CDP).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"Browser":"Chrome/125.0","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/demo"}`))
+	}))
+	defer srv.Close()
+
+	cdpURL := srv.URL
 	called := 0
 
 	runtime := newPlaywrightRuntimeWithStartFn(cdpURL, func(receivedCDPURL string, _ *playwright.RunOptions) (playwrightSession, error) {
