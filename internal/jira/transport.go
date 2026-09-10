@@ -34,12 +34,16 @@ func (s *StatusService) resolveSearchWithContext(ctx context.Context, group stri
 	if transport == groupTransportBrowser {
 		responseHeaders, responseBody, browserErr := s.resolveStatusViaBrowser(ctx, requestURL, headers)
 		if browserErr == nil {
+			body, bodyErr := limitJiraResponseBody(responseBody)
+			if bodyErr != nil {
+				return searchStatusResponse{}, false, bodyErr
+			}
 			return searchStatusResponse{
 				statusCode:  responseHeaders.statusCode,
 				retryAfter:  responseHeaders.retryAfter,
 				contentType: responseHeaders.contentType,
 				location:    responseHeaders.location,
-				body:        responseBody,
+				body:        body,
 			}, false, nil
 		}
 
@@ -68,6 +72,17 @@ func (s *StatusService) groupHTTPClient(group string) httpDoer {
 	return s.httpClient
 }
 
+// errJiraResponseTooLarge — постоянная ошибка: повтор запроса не изменит исход,
+// поэтому классифицируется как StatusStateError, а не как transient.
+var errJiraResponseTooLarge = fmt.Errorf("тело ответа jira превышает лимит %d байт", maxJiraResponseBytes)
+
+func limitJiraResponseBody(body []byte) ([]byte, error) {
+	if len(body) > maxJiraResponseBytes {
+		return nil, errJiraResponseTooLarge
+	}
+	return body, nil
+}
+
 func (s *StatusService) resolveStatusViaHTTP(ctx context.Context, group string, requestURL string, headers map[string]string) (searchStatusResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
@@ -86,9 +101,12 @@ func (s *StatusService) resolveStatusViaHTTP(ctx context.Context, group string, 
 		_ = resp.Body.Close()
 	}()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJiraResponseBytes+1))
 	if err != nil {
 		return searchStatusResponse{}, fmt.Errorf("прочитать тело ответа jira: %w", err)
+	}
+	if len(body) > maxJiraResponseBytes {
+		return searchStatusResponse{}, errJiraResponseTooLarge
 	}
 
 	return searchStatusResponse{

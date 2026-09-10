@@ -45,8 +45,13 @@ func (s *StatusService) ListReleasedFixVersions(ctx context.Context, group strin
 	headers := buildRequestHeaders(groupCfg.auth)
 	startAt := 0
 	versions := make([]ReleaseVersion, 0, jiraReleasePageSize)
+	pages := 0
 
 	for {
+		pages++
+		if pages > maxJiraReleasePages {
+			return nil, fmt.Errorf("jira release pagination превышает лимит %d страниц", maxJiraReleasePages)
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -125,8 +130,13 @@ func (s *StatusService) ListDoneIssueKeysByRelease(ctx context.Context, group, r
 	headers := buildRequestHeaders(groupCfg.auth)
 	startAt := 0
 	keysSet := make(map[string]struct{})
+	pages := 0
 
 	for {
+		pages++
+		if pages > maxJiraReleasePages {
+			return nil, fmt.Errorf("jira issue pagination превышает лимит %d страниц", maxJiraReleasePages)
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

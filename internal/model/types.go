@@ -90,6 +90,7 @@ const (
 	JiraStatusReasonHTTPError                          JiraStatusReason = "http_error"
 	JiraStatusReasonTransportError                     JiraStatusReason = "transport_error"
 	JiraStatusReasonResponseParseErr                   JiraStatusReason = "response_parse_error"
+	JiraStatusReasonResponseTooLarge                   JiraStatusReason = "response_too_large"
 	JiraStatusReasonBrowserUnavailableHTTPFallback     JiraStatusReason = "browser_unavailable_http_fallback"
 	JiraStatusReasonBrowserUnavailableHTTPAuthRequired JiraStatusReason = "browser_unavailable_http_auth_required"
 	JiraStatusReasonBrowserUnavailableHTTPError        JiraStatusReason = "browser_unavailable_http_error"
