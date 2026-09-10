@@ -9,7 +9,7 @@ GOLANGCI_LINT := $(or $(shell command -v golangci-lint 2>/dev/null),$(shell go e
 GORELEASER := $(or $(shell command -v goreleaser 2>/dev/null),$(shell go env GOPATH)/bin/goreleaser)
 COMMITLINT := $(or $(shell command -v commitlint 2>/dev/null),$(shell go env GOPATH)/bin/commitlint)
 
-.PHONY: test lint build check fmt-check vet test-race coverage vulncheck
+.PHONY: test lint build check fmt-check vet test-race coverage vulncheck check-empty-dirs
 
 test:
 	go test $(GO_PACKAGES)
@@ -49,7 +49,10 @@ vet:
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-check: fmt-check test vet build lint
+check-empty-dirs:
+	./scripts/check-empty-dirs.sh
+
+check: fmt-check check-empty-dirs test vet build lint
 
 .PHONY: release-snapshot release-check goreleaser-install release-dry release-tag commitlint-install golangci-lint-install
 

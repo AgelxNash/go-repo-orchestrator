@@ -17,6 +17,7 @@
 
 ### Changed
 
+- Удалены legacy-placeholder директории `cmd/git-branch-cleaner/` и `internal/backup/`; `make check` теперь проверяет отсутствие пустых каталогов под `cmd/` и `internal/`.
 - Jira status prefetch стал context-aware: отмена операции из TUI доходит до batch-запросов статусов.
 - `internal/jira/status.go` разделён на сфокусированные файлы без изменения поведения.
 - `internal/usecase/branch_cleaner.go` разделён на сфокусированные файлы без изменения поведения.
