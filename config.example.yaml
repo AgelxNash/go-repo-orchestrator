@@ -132,6 +132,6 @@ repos:
     branch:
       autoswitch: "24.02"
       keep:
-        - '^(2[2-4]}\.\d{2})$'
+        - '^(2[2-4]\.\d{2})$'
       jira:
         - '(^|[-/])(?P<MARIADB>(PMM|CONC|MDEV|MCOL|CONCPP|CONJ|CONJS|ODBC|CONPY|R2DBC|MDBF|MXS)\-\d+)'
