@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// TestGitSanitizedEnvRemovesAllGitVariables проверяет, что санитизация удаляет
+// все GIT_*-переменные, сохраняет остальные и не мутирует окружение процесса.
 func TestGitSanitizedEnvRemovesAllGitVariables(t *testing.T) {
 	// t.Setenv несовместим с t.Parallel: тест меняет окружение процесса.
 	t.Setenv("GIT_DIR", "/tmp/some-foreign-git-dir")

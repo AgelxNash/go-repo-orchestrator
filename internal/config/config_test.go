@@ -819,6 +819,8 @@ func TestScanDirectoryReturnsContextErrorWhenCanceled(t *testing.T) {
 	}
 }
 
+// runCommand выполняет команду в workdir с очищенным от GIT_* окружением
+// (см. testenv.GitSanitizedEnv) и падает с выводом при ошибке.
 func runCommand(t *testing.T, workdir string, name string, args ...string) {
 	t.Helper()
 
@@ -934,5 +936,25 @@ func TestAutocheckDoesNotMatchProtectedBranches(t *testing.T) {
 	}
 	if !repo.MatchesAutocheck("feature/task") {
 		t.Fatal("feature/task must match autocheck regex")
+	}
+}
+
+// TestRunCommandIgnoresForeignGitDir проверяет, что runCommand выполняет git
+// строго в переданном workdir даже при установленной посторонней GIT_DIR
+// (регрессия issue #62 — GIT_DIR из pre-push хука worktree).
+func TestRunCommandIgnoresForeignGitDir(t *testing.T) {
+	dir := t.TempDir()
+
+	runCommand(t, dir, "git", "init", "-q", ".")
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "foreign-git-dir"))
+
+	runCommand(t, dir, "sh", "-c", "git rev-parse --absolute-git-dir > gitdir.txt")
+
+	got, err := os.ReadFile(filepath.Join(dir, "gitdir.txt"))
+	if err != nil {
+		t.Fatalf("read gitdir.txt: %v", err)
+	}
+	if want := filepath.Join(dir, ".git"); strings.TrimSpace(string(got)) != want {
+		t.Fatalf("expected git dir %q, got %q", want, strings.TrimSpace(string(got)))
 	}
 }

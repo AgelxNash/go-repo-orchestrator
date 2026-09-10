@@ -507,6 +507,8 @@ func TestLockForPathWaitCanBeCanceledByContext(t *testing.T) {
 	}
 }
 
+// runCmd выполняет команду в workdir с очищенным от GIT_* окружением
+// (см. testenv.GitSanitizedEnv) и падает с выводом при ошибке.
 func runCmd(t *testing.T, workdir string, command string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(command, args...)
@@ -518,6 +520,7 @@ func runCmd(t *testing.T, workdir string, command string, args ...string) {
 	}
 }
 
+// writeFile записывает файл с тестовым содержимым.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -694,5 +697,25 @@ func TestListBranchesLocalAndRemote(t *testing.T) {
 	}
 	if !hasRemoteFeature {
 		t.Fatalf("expected remote-tracking branches in %+v", branches)
+	}
+}
+
+// TestRunCmdIgnoresForeignGitDir проверяет, что runCmd выполняет git строго в
+// переданном workdir даже при установленной посторонней GIT_DIR (регрессия
+// issue #62 — GIT_DIR из pre-push хука worktree).
+func TestRunCmdIgnoresForeignGitDir(t *testing.T) {
+	dir := t.TempDir()
+
+	runCmd(t, dir, "git", "init", "-q", ".")
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "foreign-git-dir"))
+
+	runCmd(t, dir, "sh", "-c", "git rev-parse --absolute-git-dir > gitdir.txt")
+
+	got, err := os.ReadFile(filepath.Join(dir, "gitdir.txt"))
+	if err != nil {
+		t.Fatalf("read gitdir.txt: %v", err)
+	}
+	if want := filepath.Join(dir, ".git"); strings.TrimSpace(string(got)) != want {
+		t.Fatalf("expected git dir %q, got %q", want, strings.TrimSpace(string(got)))
 	}
 }
