@@ -74,7 +74,7 @@ func TestPlaywrightRuntimeRequestGETWhenNotStarted(t *testing.T) {
 	t.Parallel()
 
 	runtime := newPlaywrightRuntimeWithStartFn("", nil)
-	_, _, _, err := runtime.RequestGET(t.Context(), "https://jira.example.com/rest/api/2/issue/OPS-1?fields=status", nil)
+	_, _, _, _, err := runtime.RequestGET(t.Context(), "https://jira.example.com/rest/api/2/issue/OPS-1?fields=status", nil)
 	if err == nil {
 		t.Fatal("expected request error when runtime is not started")
 	}
@@ -463,5 +463,14 @@ func TestPlaywrightRuntimeBootstrapFailure(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "не удалось автоматически подготовить локальный Playwright runtime") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSnapshotContextsWhenNotStarted(t *testing.T) {
+	t.Parallel()
+
+	runtime := newPlaywrightRuntimeWithStartFn("", nil)
+	if _, err := runtime.SnapshotContexts("https://jira.example.com"); err == nil {
+		t.Fatal("expected snapshot error when runtime is not started")
 	}
 }

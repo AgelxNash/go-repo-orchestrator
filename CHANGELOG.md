@@ -8,6 +8,7 @@
 
 ### Added
 
+- Команда `doctor jira <ISSUE-KEY>`: один запрос статуса Jira-задачи с полным трейсом (транспорт, CDP preflight и выбор контекста для browser-групп, HTTP-статус/content-type/final URL, фрагмент тела, вердикт классификатора auth, факт и причина browser→HTTP fallback) — без запуска TUI и без секретов в выводе.
 - Подстановка переменных окружения в значениях YAML-конфига: плейсхолдеры `${VAR}` и `${VAR:-default}` (синтаксис docker-compose) во всех строковых значениях; незаданная переменная без дефолта — понятная ошибка на старте с именем переменной и путём ключа; `$$` экранирует литеральный `$`.
 - CI: `make test-race`, coverage-профиль и artifact `coverage-profile` в GitHub Actions.
 - CI: `make vulncheck` и `govulncheck` в `ci / go-checks`.
