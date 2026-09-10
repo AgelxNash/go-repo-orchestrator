@@ -149,6 +149,7 @@ func (f *fakeGitClient) CreateTrackingBranchAndCheckout(ctx context.Context, rep
 	return nil
 }
 
+// TestLoadRepoBranchesOpensourceClonesMissingPathViaUpdateFlow клонирует отсутствующий опенсорс-путь через update.
 func TestLoadRepoBranchesOpensourceClonesMissingPathViaUpdateFlow(t *testing.T) {
 	t.Parallel()
 
@@ -228,6 +229,7 @@ func TestLoadRepoBranchesOpensourceClonesMissingPathViaUpdateFlow(t *testing.T) 
 	}
 }
 
+// TestLoadRepoBranchesOpensourceKeepsLocalDataAndReturnsSyncWarning сохраняет локальные ветки при сбое update.
 func TestLoadRepoBranchesOpensourceKeepsLocalDataAndReturnsSyncWarning(t *testing.T) {
 	t.Parallel()
 
@@ -280,6 +282,7 @@ func TestLoadRepoBranchesOpensourceKeepsLocalDataAndReturnsSyncWarning(t *testin
 	}
 }
 
+// TestLoadRepoBranchesEmptyCloneReturnsWarning проверяет деградацию пустого клона в warning, а не hard error.
 func TestLoadRepoBranchesEmptyCloneReturnsWarning(t *testing.T) {
 	t.Parallel()
 
@@ -321,6 +324,7 @@ func TestLoadRepoBranchesEmptyCloneReturnsWarning(t *testing.T) {
 	}
 }
 
+// TestLoadRepoBranchesOpensourceReturnsErrorWhenUpdateFailsAndNoLocalRepo возвращает ошибку без локального клона.
 func TestLoadRepoBranchesOpensourceReturnsErrorWhenUpdateFailsAndNoLocalRepo(t *testing.T) {
 	t.Parallel()
 

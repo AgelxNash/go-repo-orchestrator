@@ -49,6 +49,7 @@ func (m Model) handleRepoLoadJiraProgress(msg repoLoadJiraProgressMsg) (tea.Mode
 	return m, waitRepoLoadJiraProgressCmd(msg.repoName, msg.startup, msg.stream)
 }
 
+// handlePlaywrightStartupCompleted фиксирует результат запуска Playwright на старте.
 func (m Model) handlePlaywrightStartupCompleted(msg playwrightStartupCompletedMsg) (tea.Model, tea.Cmd) {
 	m.finishStartupTaskIfNeeded(true)
 	if msg.err != nil {
@@ -71,6 +72,7 @@ func (m Model) handlePlaywrightStartupCompleted(msg playwrightStartupCompletedMs
 	return m, nil
 }
 
+// handleSpinnerTick обновляет спиннер, пока идет загрузка startup, refresh или release.
 func (m Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	if !m.loadingSelectedRepo() && !m.startupLoading && !m.refreshLocked && !m.releaseLoading {
 		return m, nil
@@ -80,6 +82,7 @@ func (m Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleBranchesLoaded применяет результат загрузки веток и учитывает его в сводке startup.
 func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) {
 	m.finishAction(msg.actionKey, msg.actionID)
 	if expectedReqID := m.repoLoadReq[msg.repoName]; expectedReqID != msg.requestID {
@@ -192,10 +195,12 @@ func (m Model) handleBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// handleInitialLoad запускает первичную загрузку репозиториев после Init.
 func (m Model) handleInitialLoad(msg initialLoadMsg) (tea.Model, tea.Cmd) {
 	return m, m.startInitialLoads()
 }
 
+// handleScriptGenerated сохраняет путь сгенерированного скрипта или ошибку генерации.
 func (m Model) handleScriptGenerated(msg scriptGeneratedMsg) (tea.Model, tea.Cmd) {
 	m.confirmType = confirmNone
 	m.err = userFacingError(msg.err)
@@ -209,6 +214,7 @@ func (m Model) handleScriptGenerated(msg scriptGeneratedMsg) (tea.Model, tea.Cmd
 	return m, nil
 }
 
+// handleRepoStatLoaded применяет быстрый статус репозитория и учитывает его в сводке startup.
 func (m Model) handleRepoStatLoaded(msg repoStatLoadedMsg) (tea.Model, tea.Cmd) {
 	m.finishAction(msg.actionKey, msg.actionID)
 	m.finishRefreshPendingIfNeeded(msg.repoName)

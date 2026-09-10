@@ -41,6 +41,7 @@ func (m Model) View() string {
 	return appStyle.Render(view)
 }
 
+// viewReposTab рисует вкладку репозиториев и увеличивает инфо-панель при ошибках синхронизации.
 func (m Model) viewReposTab(width, height int) string {
 	if !m.showInfo {
 		return m.viewReposPanel(width, height)
@@ -61,6 +62,7 @@ func (m Model) viewReposTab(width, height int) string {
 	)
 }
 
+// viewBranchesTab рисует вкладку веток и увеличивает инфо-панель при ошибках синхронизации.
 func (m Model) viewBranchesTab(width, height int) string {
 	if !m.showInfo {
 		return m.viewBranchesPanel(width, height)
@@ -81,6 +83,7 @@ func (m Model) viewBranchesTab(width, height int) string {
 	)
 }
 
+// viewReposPanel рисует список репозиториев со статусами синхронизации и HEAD.
 func (m Model) viewReposPanel(width, height int) string {
 	style := panelStyle.Width(width).Height(height)
 	if m.focus == focusRepos {
@@ -151,6 +154,7 @@ func (m Model) viewReposPanel(width, height int) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// viewBranchesPanel рисует список веток и полный текст ошибки загрузки без усечения.
 func (m Model) viewBranchesPanel(width, height int) string {
 	style := panelStyle.Width(width).Height(height)
 	if m.focus == focusBranches {
@@ -265,6 +269,7 @@ func (m Model) viewBranchesPanel(width, height int) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// viewStatsPanel рисует инфо-панель: статус Git, полный текст ошибок и состояние оболочки без checkout.
 func (m Model) viewStatsPanel(width, height int) string {
 	style := infoStyle.Width(width).Height(height)
 	innerWidth := width - 4

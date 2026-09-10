@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// TestIsTransientGitOutput проверяет маркеры stderr git/ssh для retry.
 func TestIsTransientGitOutput(t *testing.T) {
 	t.Parallel()
 
@@ -51,6 +52,7 @@ func TestIsTransientGitOutput(t *testing.T) {
 	}
 }
 
+// TestWithNetworkRetryRetriesTransientThenSucceeds проверяет повтор transient-ошибки до успеха.
 func TestWithNetworkRetryRetriesTransientThenSucceeds(t *testing.T) {
 	t.Parallel()
 
@@ -71,6 +73,7 @@ func TestWithNetworkRetryRetriesTransientThenSucceeds(t *testing.T) {
 	}
 }
 
+// TestWithNetworkRetryDoesNotRetryPermanentError проверяет, что постоянная ошибка не ретраится.
 func TestWithNetworkRetryDoesNotRetryPermanentError(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +91,7 @@ func TestWithNetworkRetryDoesNotRetryPermanentError(t *testing.T) {
 	}
 }
 
+// TestNetworkSemaphoreLimitsConcurrency проверяет, что второй fetch ждет слот семафора.
 func TestNetworkSemaphoreLimitsConcurrency(t *testing.T) {
 	t.Parallel()
 
@@ -130,6 +134,7 @@ func TestNetworkSemaphoreLimitsConcurrency(t *testing.T) {
 	}
 }
 
+// TestWithNetworkConcurrencyOptionIgnoredWhenNonPositive проверяет, что неположительный лимит не меняет default.
 func TestWithNetworkConcurrencyOptionIgnoredWhenNonPositive(t *testing.T) {
 	t.Parallel()
 

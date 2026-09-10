@@ -11,10 +11,12 @@ import (
 // ErrEmptyClone — локальный клон без checkout: HEAD не резолвится и нет локальных веток.
 var ErrEmptyClone = errors.New("репозиторий-оболочка без checkout")
 
+// newEmptyCloneError возвращает ErrEmptyClone с подсказкой, как восстановить checkout.
 func newEmptyCloneError() error {
 	return fmt.Errorf("%w: HEAD не резолвится и локальных веток нет; выполните fetch и checkout дефолтной ветки", ErrEmptyClone)
 }
 
+// isEmptyCloneRepo сообщает, что в репозитории нет локальных веток.
 func isEmptyCloneRepo(repo *git.Repository) bool {
 	if repo == nil {
 		return false

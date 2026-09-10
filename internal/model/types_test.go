@@ -2,6 +2,7 @@ package model
 
 import "testing"
 
+// TestBranchInfoIsRemote проверяет, что remote scope считается удалённой веткой.
 func TestBranchInfoIsRemote(t *testing.T) {
 	t.Parallel()
 
@@ -13,6 +14,7 @@ func TestBranchInfoIsRemote(t *testing.T) {
 	}
 }
 
+// TestBranchInfoIsLocal проверяет, что локальный scope не считается remote.
 func TestBranchInfoIsLocal(t *testing.T) {
 	t.Parallel()
 
@@ -24,6 +26,7 @@ func TestBranchInfoIsLocal(t *testing.T) {
 	}
 }
 
+// TestHasSyncWarningIgnoresEmptyClone проверяет, что оболочка без checkout не считается сбоем remote.
 func TestHasSyncWarningIgnoresEmptyClone(t *testing.T) {
 	t.Parallel()
 
@@ -39,6 +42,7 @@ func TestHasSyncWarningIgnoresEmptyClone(t *testing.T) {
 	}
 }
 
+// TestHasSyncWarningDetectsRemoteCode проверяет предупреждение remote_sync_failed.
 func TestHasSyncWarningDetectsRemoteCode(t *testing.T) {
 	t.Parallel()
 

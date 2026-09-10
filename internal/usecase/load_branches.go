@@ -16,14 +16,17 @@ func (c *Cleaner) LoadRepoBranches(ctx context.Context, repo config.RepoConfig) 
 	return rb, err
 }
 
+// LoadRepoBranchesWithSummary загружает ветки и возвращает сводку прогресса Jira.
 func (c *Cleaner) LoadRepoBranchesWithSummary(ctx context.Context, repo config.RepoConfig) (model.RepoBranches, RepoLoadSummary, error) {
 	return c.loadRepoBranchesDetailed(ctx, repo, nil)
 }
 
+// LoadRepoBranchesWithProgress загружает ветки и сообщает промежуточный прогресс Jira.
 func (c *Cleaner) LoadRepoBranchesWithProgress(ctx context.Context, repo config.RepoConfig, onProgress RepoLoadProgressCallback) (model.RepoBranches, RepoLoadSummary, error) {
 	return c.loadRepoBranchesDetailed(ctx, repo, onProgress)
 }
 
+// loadRepoBranchesDetailed собирает ветки репозитория и деградирует пустой клон в предупреждение.
 func (c *Cleaner) loadRepoBranchesDetailed(ctx context.Context, repo config.RepoConfig, onProgress RepoLoadProgressCallback) (model.RepoBranches, RepoLoadSummary, error) {
 	managedPath, syncWarning, err := c.resolveRepoForRead(ctx, repo)
 	if err != nil {

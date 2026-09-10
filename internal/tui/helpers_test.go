@@ -9,6 +9,7 @@ import (
 	"github.com/agelxnash/go-repo-orchestrator/internal/git"
 )
 
+// TestWrapTextKeepsLongGitStderrReadable проверяет, что длинный stderr git переносится без потери причины.
 func TestWrapTextKeepsLongGitStderrReadable(t *testing.T) {
 	t.Parallel()
 
@@ -28,6 +29,7 @@ func TestWrapTextKeepsLongGitStderrReadable(t *testing.T) {
 	}
 }
 
+// TestUserFacingErrorKeepsTransientSSHDetails сохраняет kex_exchange_identification в тексте для TUI.
 func TestUserFacingErrorKeepsTransientSSHDetails(t *testing.T) {
 	t.Parallel()
 
@@ -48,6 +50,7 @@ func TestUserFacingErrorKeepsTransientSSHDetails(t *testing.T) {
 	}
 }
 
+// TestUserFacingErrorKeepsEmptyClone сохраняет ErrEmptyClone для отображения оболочки без checkout.
 func TestUserFacingErrorKeepsEmptyClone(t *testing.T) {
 	t.Parallel()
 

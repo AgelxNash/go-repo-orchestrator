@@ -310,6 +310,7 @@ func (m Model) selectedRepoName() string {
 	return m.cfg.Repos[m.repoIdx].Name
 }
 
+// selectRepoByName ставит курсор на репозиторий с указанным именем.
 func (m *Model) selectRepoByName(name string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -325,6 +326,7 @@ func (m *Model) selectRepoByName(name string) {
 	}
 }
 
+// selectedRepoStat возвращает загруженный статус репозитория под курсором.
 func (m Model) selectedRepoStat() (model.RepoStat, bool) {
 	repoName := m.selectedRepoName()
 	if repoName == "" {
@@ -349,6 +351,7 @@ func (m Model) selectedRepoStat() (model.RepoStat, bool) {
 	return model.RepoStat{}, false
 }
 
+// repoListState возвращает текущую ветку и статус репозитория для списка.
 func (m Model) repoListState(repoName string) (string, string) {
 	branch := "-"
 	status := "Не загружен"
@@ -379,6 +382,7 @@ func (m Model) repoListState(repoName string) (string, string) {
 	return branch, status
 }
 
+// renderRepoStatus рисует цветовой маркер статуса репозитория в списке.
 func (m Model) renderRepoStatus(status string) string {
 	switch status {
 	case "Ошибка":
@@ -398,6 +402,7 @@ func (m Model) renderRepoStatus(status string) string {
 	}
 }
 
+// repoStatusCode возвращает однобуквенный код статуса репозитория для компактного списка.
 func (m Model) repoStatusCode(status string) string {
 	switch status {
 	case "Ошибка":
@@ -526,6 +531,7 @@ func repoSourceLabel(repo config.RepoConfig, ok bool) string {
 	}
 }
 
+// repoSourceCode возвращает короткий код источника репозитория для списка.
 func repoSourceCode(repo config.RepoConfig) string {
 	switch repo.SourceType() {
 	case "path":
@@ -539,6 +545,7 @@ func repoSourceCode(repo config.RepoConfig) string {
 	}
 }
 
+// dirtySummary кратко описывает незакоммиченные изменения рабочего дерева.
 func dirtySummary(st model.DirtyStats) string {
 	return fmt.Sprintf(
 		"изменено:%d добавлено:%d удалено:%d неотслеж:%d",
@@ -549,6 +556,7 @@ func dirtySummary(st model.DirtyStats) string {
 	)
 }
 
+// userFacingError переводит техническую ошибку git/сети в сообщение для TUI, сохраняя исходные детали.
 func userFacingError(err error) error {
 	if err == nil {
 		return nil
@@ -610,6 +618,7 @@ func userFacingError(err error) error {
 	return errors.New(msg)
 }
 
+// wrapText переносит текст по ширине, сохраняя существующие переводы строк.
 func wrapText(s string, width int) []string {
 	if width < 1 {
 		width = 1
@@ -633,6 +642,7 @@ func wrapText(s string, width int) []string {
 	return lines
 }
 
+// wrapParagraph переносит один абзац по ширине, предпочитая разрыв по пробелу.
 func wrapParagraph(s string, width int) []string {
 	runes := []rune(s)
 	if len(runes) <= width {
@@ -657,6 +667,7 @@ func wrapParagraph(s string, width int) []string {
 	return lines
 }
 
+// lastSpaceIndex возвращает индекс последнего пробела в срезе рун или -1.
 func lastSpaceIndex(runes []rune) int {
 	for i := len(runes) - 1; i >= 0; i-- {
 		if runes[i] == ' ' {
@@ -666,6 +677,7 @@ func lastSpaceIndex(runes []rune) int {
 	return -1
 }
 
+// wrapPrefixed переносит текст по ширине и добавляет префикс к каждой строке.
 func wrapPrefixed(s, prefix string, width int) []string {
 	inner := width - len([]rune(prefix))
 	if inner < 8 {
@@ -679,6 +691,7 @@ func wrapPrefixed(s, prefix string, width int) []string {
 	return out
 }
 
+// truncate усекает строку до limit рун и добавляет многоточие.
 func truncate(s string, limit int) string {
 	if limit <= 0 {
 		return ""

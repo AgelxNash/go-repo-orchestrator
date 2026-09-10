@@ -79,6 +79,7 @@ func TestCanActivateBranchesBlockedByRepoError(t *testing.T) {
 	}
 }
 
+// TestRepoListStateShowsCurrentBranch показывает текущую ветку в статусе репозитория.
 func TestRepoListStateShowsCurrentBranch(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", Path: "/tmp/repo-a"}},
@@ -98,6 +99,7 @@ func TestRepoListStateShowsCurrentBranch(t *testing.T) {
 	}
 }
 
+// TestRepoListStateShowsWarningForUnsyncedRepo показывает статус «Предупреждение» при сбое remote.
 func TestRepoListStateShowsWarningForUnsyncedRepo(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/repo-a.git"}},
@@ -118,6 +120,7 @@ func TestRepoListStateShowsWarningForUnsyncedRepo(t *testing.T) {
 	}
 }
 
+// TestRepoListStateShowsEmptyClone показывает статус «Нет HEAD» для клона без checkout.
 func TestRepoListStateShowsEmptyClone(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "shell", Path: "/tmp/shell"}},
@@ -137,6 +140,7 @@ func TestRepoListStateShowsEmptyClone(t *testing.T) {
 	}
 }
 
+// TestCanActivateBranchesAllowsEmptyClone разрешает открыть панель веток у оболочки без checkout.
 func TestCanActivateBranchesAllowsEmptyClone(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "shell", Path: "/tmp/shell"}},
@@ -157,6 +161,7 @@ func TestCanActivateBranchesAllowsEmptyClone(t *testing.T) {
 	}
 }
 
+// TestCanActivateBranchesAllowsSyncWarning разрешает вкладку веток при предупреждении синхронизации.
 func TestCanActivateBranchesAllowsSyncWarning(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/repo-a.git"}},
@@ -561,6 +566,7 @@ func TestGlobalRescanBlocksNavigationUntilAllReposComplete(t *testing.T) {
 	}
 }
 
+// TestStartupLoadingBlocksInteractiveInputAndShowsInitScreen блокирует ввод до конца инициализации.
 func TestStartupLoadingBlocksInteractiveInputAndShowsInitScreen(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -590,6 +596,7 @@ func TestStartupLoadingBlocksInteractiveInputAndShowsInitScreen(t *testing.T) {
 	}
 }
 
+// TestStartupLoadingFinishesAfterInitialMessages проверяет снятие startup-блокировки после всех задач.
 func TestStartupLoadingFinishesAfterInitialMessages(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -614,6 +621,7 @@ func TestStartupLoadingFinishesAfterInitialMessages(t *testing.T) {
 	}
 }
 
+// TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete проверяет прогресс URL и итоговую сводку.
 func TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -650,6 +658,7 @@ func TestStartupStatusShowsURLProgressAndDoesNotSwitchToRepoStatusUntilComplete(
 	}
 }
 
+// TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo проверяет сводку N/M и переход к проблемному репо.
 func TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{
@@ -699,6 +708,7 @@ func TestStartupSummaryCountsNetworkErrorsAndSelectsProblemRepo(t *testing.T) {
 	}
 }
 
+// TestStatsPanelWrapsFullFetchError проверяет, что ИНФО показывает причину SSH handshake.
 func TestStatsPanelWrapsFullFetchError(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{{Name: "repo-a", URL: "https://example.com/a.git"}},
@@ -721,6 +731,7 @@ func TestStatsPanelWrapsFullFetchError(t *testing.T) {
 	}
 }
 
+// TestStartupLoadsOpensourceRepoBranchesEvenWhenNotSelected грузит ветки опенсорс-репо вне выбора.
 func TestStartupLoadsOpensourceRepoBranchesEvenWhenNotSelected(t *testing.T) {
 	m := NewModel(&config.Config{
 		Repos: []config.RepoConfig{

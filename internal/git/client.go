@@ -579,6 +579,7 @@ func (c *Client) GetRepoStat(ctx context.Context, repoPath string) (model.RepoSt
 	}, nil
 }
 
+// cloneRepo клонирует репозиторий в managedPath с ограничением параллелизма и retry.
 func (c *Client) cloneRepo(ctx context.Context, repoURL, managedPath string) error {
 	if err := ensureDir(filepath.Dir(managedPath)); err != nil {
 		return err
@@ -596,6 +597,7 @@ func (c *Client) cloneRepo(ctx context.Context, repoURL, managedPath string) err
 	})
 }
 
+// ensureOriginURL записывает URL origin, если текущий адрес отличается.
 func (c *Client) ensureOriginURL(ctx context.Context, repoPath, repoURL string) error {
 	stdout, err := c.runGit(ctx, repoPath, "remote", "get-url", "origin")
 	if err != nil {
@@ -614,6 +616,7 @@ func (c *Client) ensureOriginURL(ctx context.Context, repoPath, repoURL string) 
 	return nil
 }
 
+// fetchPrune выполняет git fetch --prune origin с семафором и retry для transient-сбоев.
 func (c *Client) fetchPrune(ctx context.Context, repoPath string) error {
 	return c.withNetworkRetry(ctx, func(ctx context.Context) error {
 		if _, err := c.runGit(ctx, repoPath, "fetch", "--prune", "origin"); err != nil {
@@ -655,6 +658,7 @@ func (c *Client) seedLocalBranchesFromOrigin(ctx context.Context, repoPath strin
 	return nil
 }
 
+// open открывает локальный git-репозиторий по пути.
 func (c *Client) open(repoPath string) (*git.Repository, error) {
 	repo, err := git.PlainOpen(repoPath)
 	if err != nil {
@@ -664,6 +668,7 @@ func (c *Client) open(repoPath string) (*git.Repository, error) {
 	return repo, nil
 }
 
+// commitForRef возвращает объект коммита, на который указывает ссылка.
 func commitForRef(repo *git.Repository, ref *plumbing.Reference) (*object.Commit, error) {
 	commit, err := repo.CommitObject(ref.Hash())
 	if err != nil {
@@ -673,6 +678,7 @@ func commitForRef(repo *git.Repository, ref *plumbing.Reference) (*object.Commit
 	return commit, nil
 }
 
+// runGit запускает git-команду в repoPath и классифицирует ошибку CLI.
 func (c *Client) runGit(parentCtx context.Context, repoPath string, args ...string) (string, error) {
 	execCtx, cancel := c.withCommandTimeout(parentCtx)
 	defer cancel()
@@ -694,6 +700,7 @@ func (c *Client) runGit(parentCtx context.Context, repoPath string, args ...stri
 	return stdout.String(), nil
 }
 
+// classifyGitCommandError оборачивает сбой git CLI и помечает transient сетевые ошибки.
 func (c *Client) classifyGitCommandError(execCtx context.Context, op, stderr string, runErr error) error {
 	if errors.Is(execCtx.Err(), context.Canceled) {
 		return fmt.Errorf("git %s отменен: %w", op, runErr)
@@ -713,6 +720,7 @@ func (c *Client) classifyGitCommandError(execCtx context.Context, op, stderr str
 	return wrapped
 }
 
+// mergeStatus определяет, влита ли ветка в базовую.
 func (c *Client) mergeStatus(ctx context.Context, repoPath, branch, defaultBranch string) (model.MergeStatus, error) {
 	if strings.TrimSpace(defaultBranch) == "" || branch == defaultBranch {
 		return model.MergeStatusUnknown, nil
@@ -733,6 +741,7 @@ func (c *Client) mergeStatus(ctx context.Context, repoPath, branch, defaultBranc
 	return model.MergeStatusUnknown, nil
 }
 
+// resolveBaseBranch возвращает upstream ветки или пустую строку.
 func (c *Client) resolveBaseBranch(ctx context.Context, repoPath, branch string) string {
 	stdout, err := c.runGit(ctx, repoPath, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
 	if err != nil {
@@ -747,6 +756,7 @@ func (c *Client) resolveBaseBranch(ctx context.Context, repoPath, branch string)
 	return upstream
 }
 
+// runGitStatusOnly запускает git-команду без захвата stdout и классифицирует ошибку CLI.
 func (c *Client) runGitStatusOnly(parentCtx context.Context, repoPath string, args ...string) error {
 	execCtx, cancel := c.withCommandTimeout(parentCtx)
 	defer cancel()

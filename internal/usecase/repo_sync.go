@@ -32,6 +32,7 @@ func (c *Cleaner) LoadRepoStat(ctx context.Context, repo config.RepoConfig) (mod
 const repoWarningRemoteSyncFailed = model.RepoWarningRemoteSyncFailed
 const repoWarningEmptyClone = model.RepoWarningEmptyClone
 
+// newRemoteSyncWarning собирает предупреждение о неудачной синхронизации remote.
 func newRemoteSyncWarning(err error) model.RepoWarning {
 	return model.RepoWarning{
 		Code:    repoWarningRemoteSyncFailed,

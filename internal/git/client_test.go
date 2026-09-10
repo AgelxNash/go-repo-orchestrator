@@ -821,6 +821,7 @@ func TestDiagnoseRepoStates(t *testing.T) {
 	})
 }
 
+// TestCurrentBranchEmptyClone проверяет ErrEmptyClone и warning в GetRepoStat.
 func TestCurrentBranchEmptyClone(t *testing.T) {
 	t.Parallel()
 

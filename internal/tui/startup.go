@@ -10,14 +10,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// startInitialLoads запускает первую загрузку репозиториев при старте TUI.
 func (m *Model) startInitialLoads() tea.Cmd {
 	return m.startPreloadPass(true, false)
 }
 
+// startRescanAllRepos перезапускает загрузку всех репозиториев, сохраняя выбор.
 func (m *Model) startRescanAllRepos() tea.Cmd {
 	return m.startPreloadPass(false, true)
 }
 
+// startPreloadPass запускает параллельную загрузку репозиториев при старте или пересканировании.
 func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	if len(m.cfg.Repos) == 0 {
 		return nil
@@ -134,6 +137,7 @@ func (m *Model) startPreloadPass(startup bool, keepSelection bool) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// finishStartupTaskIfNeeded уменьшает счетчик startup-задач и показывает сводку по завершении.
 func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 	if !startup || !m.startupLoading {
 		return
@@ -151,6 +155,7 @@ func (m *Model) finishStartupTaskIfNeeded(startup bool) {
 	}
 }
 
+// applyStartupCompletionSummary записывает итог загрузки в статус/лог и переходит к проблемному репо.
 func (m *Model) applyStartupCompletionSummary() {
 	summary := m.startupCompletionSummary()
 	m.statusLine = summary.text
@@ -165,6 +170,7 @@ func (m *Model) applyStartupCompletionSummary() {
 	}
 }
 
+// startupCompletionSummary описывает итог первичной синхронизации для статус-строки и лога.
 type startupCompletionSummary struct {
 	text         string
 	logLine      string
@@ -172,6 +178,7 @@ type startupCompletionSummary struct {
 	firstProblem string
 }
 
+// startupCompletionSummary считает успешные, кэш, сетевые ошибки и клоны без checkout.
 func (m Model) startupCompletionSummary() startupCompletionSummary {
 	total := len(m.cfg.Repos)
 	synced := 0
@@ -233,6 +240,7 @@ func (m Model) startupCompletionSummary() startupCompletionSummary {
 	return summary
 }
 
+// ruCount форматирует число с русской формой существительного (1/2-4/5+).
 func ruCount(n int, one, few, many string) string {
 	nAbs := n % 100
 	n1 := nAbs % 10
@@ -248,6 +256,7 @@ func ruCount(n int, one, few, many string) string {
 	return fmt.Sprintf("%d %s", n, word)
 }
 
+// finishStartupURLTaskIfNeeded учитывает завершение синхронизации URL/opensource-репозитория.
 func (m *Model) finishStartupURLTaskIfNeeded(repoName string, startup bool) {
 	if !startup {
 		return
@@ -425,6 +434,7 @@ func (m *Model) updateStartupCurrentOpFromLog(entry string) {
 	m.setStartupStage("", entry)
 }
 
+// viewStartupScreen рисует экран инициализации со спиннером, прогрессом и логом.
 func (m Model) viewStartupScreen() string {
 	usableW := max(40, m.width-4)
 	usableH := max(12, m.height-2)
@@ -498,6 +508,7 @@ func (m Model) viewStartupScreen() string {
 	)
 }
 
+// startupProgressBar рисует полосу прогресса startup-задач.
 func startupProgressBar(done, total, width int) string {
 	if width <= 0 || total <= 0 {
 		return ""
@@ -508,6 +519,7 @@ func startupProgressBar(done, total, width int) string {
 	return lipgloss.NewStyle().Foreground(mcBrightCyan).Render(bar)
 }
 
+// viewStartupLogPanel рисует прокручиваемый лог загрузки с переносом длинных ошибок.
 func (m Model) viewStartupLogPanel(width, height int) string {
 	logBg := lipgloss.Color("17")
 	logFg := lipgloss.Color("252")

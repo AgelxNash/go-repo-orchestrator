@@ -96,10 +96,12 @@ const (
 	JiraStatusReasonBrowserUnavailableHTTPError        JiraStatusReason = "browser_unavailable_http_error"
 )
 
+// IsRemote сообщает, что ветка относится к удаленному scope.
 func (b BranchInfo) IsRemote() bool {
 	return b.Scope == BranchScopeRemote
 }
 
+// IsLocal сообщает, что ветка относится к локальному scope.
 func (b BranchInfo) IsLocal() bool {
 	return b.Scope == BranchScopeLocal
 }
@@ -111,8 +113,10 @@ type RepoWarning struct {
 }
 
 const (
+	// RepoWarningRemoteSyncFailed — синхронизация remote не удалась, локальные данные доступны.
 	RepoWarningRemoteSyncFailed = "remote_sync_failed"
-	RepoWarningEmptyClone       = "empty_clone"
+	// RepoWarningEmptyClone — клон без checkout: HEAD не резолвится и нет локальных веток.
+	RepoWarningEmptyClone = "empty_clone"
 )
 
 // Text возвращает человекочитаемое сообщение предупреждения.

@@ -12,6 +12,7 @@ import (
 // (сброс SSH на handshake, MaxStartups, таймаут).
 var ErrTransientNetwork = errors.New("transient network error")
 
+// acquireNetwork занимает слот семафора сетевых git-операций.
 func (c *Client) acquireNetwork(ctx context.Context) error {
 	if c == nil || c.networkSem == nil {
 		return nil
@@ -25,6 +26,7 @@ func (c *Client) acquireNetwork(ctx context.Context) error {
 	}
 }
 
+// releaseNetwork освобождает слот семафора сетевых git-операций.
 func (c *Client) releaseNetwork() {
 	if c == nil || c.networkSem == nil {
 		return
@@ -35,6 +37,7 @@ func (c *Client) releaseNetwork() {
 	}
 }
 
+// withNetwork выполняет op, удерживая один слот семафора на время вызова.
 func (c *Client) withNetwork(ctx context.Context, op func() error) error {
 	if err := c.acquireNetwork(ctx); err != nil {
 		return err
@@ -92,6 +95,7 @@ func (c *Client) withNetworkRetry(ctx context.Context, op func(context.Context) 
 	return lastErr
 }
 
+// isTransientNetworkError сообщает, что ошибка относится к повторно пробуемому сетевому сбою.
 func isTransientNetworkError(err error) bool {
 	if err == nil {
 		return false
@@ -105,6 +109,7 @@ func isTransientNetworkError(err error) bool {
 	return false
 }
 
+// isTransientGitOutput распознает stderr git/ssh, характерный для сброса handshake и MaxStartups.
 func isTransientGitOutput(stderr string, runErr error) bool {
 	if errors.Is(runErr, context.DeadlineExceeded) {
 		return true
