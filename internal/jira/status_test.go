@@ -16,15 +16,15 @@ import (
 )
 
 type fakeBrowserRequester struct {
-	requestGETFn func(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error)
+	requestGETFn func(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, string, error)
 }
 
-func (f fakeBrowserRequester) RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error) {
+func (f fakeBrowserRequester) RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, string, error) {
 	if f.requestGETFn != nil {
 		return f.requestGETFn(ctx, requestURL, headers)
 	}
 
-	return 0, nil, nil, errors.New("requestGETFn is not configured")
+	return 0, nil, nil, "", errors.New("requestGETFn is not configured")
 }
 
 type panicHTTPDoer struct{}
@@ -206,7 +206,7 @@ func TestResolveStatusUsesBrowserTransportForPlaywrightGroup(t *testing.T) {
 		URL:        "https://idea.example.org",
 		Playwright: true,
 	}}))
-	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error) {
+	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, string, error) {
 		called++
 		if !strings.HasPrefix(requestURL, "https://idea.example.org/rest/api/2/search?") {
 			t.Fatalf("unexpected browser request URL: %q", requestURL)
@@ -222,7 +222,7 @@ func TestResolveStatusUsesBrowserTransportForPlaywrightGroup(t *testing.T) {
 		if headers["Accept"] != "application/json" {
 			t.Fatalf("unexpected accept header: %q", headers["Accept"])
 		}
-		return http.StatusOK, map[string]string{}, []byte(`{"issues":[{"key":"IDEA-1","fields":{"status":{"name":"In Review"}}}]}`), nil
+		return http.StatusOK, map[string]string{}, []byte(`{"issues":[{"key":"IDEA-1","fields":{"status":{"name":"In Review"}}}]}`), requestURL, nil
 	}}
 	svc.httpClient = panicHTTPDoer{}
 
@@ -253,9 +253,9 @@ func TestResolveStatusFallsBackToHTTPWhenBrowserUnavailable(t *testing.T) {
 		URL:        server.URL,
 		Playwright: true,
 	}}))
-	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, _ string, _ map[string]string) (int, map[string]string, []byte, error) {
+	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, _ string, _ map[string]string) (int, map[string]string, []byte, string, error) {
 		called++
-		return 0, nil, nil, errors.New("playwright runtime is not started")
+		return 0, nil, nil, "", errors.New("playwright runtime is not started")
 	}}
 
 	status := svc.ResolveStatus("IDEA", "", "", "IDEA-2")
@@ -286,8 +286,8 @@ func TestResolveStatusFallbackToHTTPAuthRequired(t *testing.T) {
 		URL:        server.URL,
 		Playwright: true,
 	}}))
-	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, _ string, _ map[string]string) (int, map[string]string, []byte, error) {
-		return 0, nil, nil, errors.New("playwright runtime is not started")
+	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, _ string, _ map[string]string) (int, map[string]string, []byte, string, error) {
+		return 0, nil, nil, "", errors.New("playwright runtime is not started")
 	}}
 
 	status := svc.ResolveStatus("IDEA", "", "", "IDEA-3")
@@ -307,8 +307,8 @@ func TestResolveStatusFallbackToHTTPNetworkError(t *testing.T) {
 		URL:        "https://jira.example.com",
 		Playwright: true,
 	}}))
-	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, _ string, _ map[string]string) (int, map[string]string, []byte, error) {
-		return 0, nil, nil, errors.New("playwright runtime is not started")
+	svc.browser = fakeBrowserRequester{requestGETFn: func(_ context.Context, _ string, _ map[string]string) (int, map[string]string, []byte, string, error) {
+		return 0, nil, nil, "", errors.New("playwright runtime is not started")
 	}}
 	svc.httpClient = fakeHTTPDoer{doFn: func(_ *http.Request) (*http.Response, error) {
 		return nil, errors.New("dial tcp: i/o timeout")

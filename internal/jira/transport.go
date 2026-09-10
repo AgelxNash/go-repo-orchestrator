@@ -24,9 +24,14 @@ type browserSearchResponse struct {
 	retryAfter  string
 	contentType string
 	location    string
+	finalURL    string
 }
 
-func (s *StatusService) resolveSearchWithContext(ctx context.Context, group string, transport groupTransport, requestURL string, headers map[string]string) (searchStatusResponse, bool, error) {
+// resolveSearchWithContext выполняет запрос выбранным транспортом. Для
+// browser-групп при недоступности браузера выполняется HTTP fallback;
+// usedFallback=true и browserFallbackErr содержат исходную ошибку браузерного
+// транспорта (для диагностики), независимо от исхода fallback-запроса.
+func (s *StatusService) resolveSearchWithContext(ctx context.Context, group string, transport groupTransport, requestURL string, headers map[string]string) (searchStatusResponse, bool, string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -36,32 +41,33 @@ func (s *StatusService) resolveSearchWithContext(ctx context.Context, group stri
 		if browserErr == nil {
 			body, bodyErr := limitJiraResponseBody(responseBody)
 			if bodyErr != nil {
-				return searchStatusResponse{}, false, bodyErr
+				return searchStatusResponse{}, false, "", bodyErr
 			}
 			return searchStatusResponse{
 				statusCode:  responseHeaders.statusCode,
 				retryAfter:  responseHeaders.retryAfter,
 				contentType: responseHeaders.contentType,
 				location:    responseHeaders.location,
+				finalURL:    responseHeaders.finalURL,
 				body:        body,
-			}, false, nil
+			}, false, "", nil
 		}
 
 		s.logBrowserFallback(group, browserErr)
 
 		httpResponse, err := s.resolveStatusViaHTTP(ctx, group, requestURL, headers)
 		if err != nil {
-			return searchStatusResponse{}, true, err
+			return searchStatusResponse{}, true, browserErr.Error(), err
 		}
-		return httpResponse, true, nil
+		return httpResponse, true, browserErr.Error(), nil
 	}
 
 	httpResponse, err := s.resolveStatusViaHTTP(ctx, group, requestURL, headers)
 	if err != nil {
-		return searchStatusResponse{}, false, err
+		return searchStatusResponse{}, false, "", err
 	}
 
-	return httpResponse, false, nil
+	return httpResponse, false, "", nil
 }
 
 // groupHTTPClient возвращает http-клиент группы (mTLS/CA) или общий клиент сервиса.
@@ -127,7 +133,7 @@ func (s *StatusService) resolveStatusViaBrowser(ctx context.Context, requestURL 
 		ctx = context.Background()
 	}
 
-	statusCode, responseHeaders, body, err := s.browser.RequestGET(ctx, requestURL, headers)
+	statusCode, responseHeaders, body, finalURL, err := s.browser.RequestGET(ctx, requestURL, headers)
 	if err != nil {
 		return browserSearchResponse{}, nil, fmt.Errorf("ошибка browser-запроса jira: %w", err)
 	}
@@ -137,6 +143,7 @@ func (s *StatusService) resolveStatusViaBrowser(ctx context.Context, requestURL 
 		retryAfter:  headerValue(responseHeaders, "Retry-After"),
 		contentType: headerValue(responseHeaders, "Content-Type"),
 		location:    headerValue(responseHeaders, "Location"),
+		finalURL:    finalURL,
 	}, body, nil
 }
 

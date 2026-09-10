@@ -193,7 +193,8 @@ func (s *StatusService) fetchAndStoreBatch(ctx context.Context, batch []prepared
 			zap.Int("startAt", startAt),
 		)
 
-		response, usedBrowserFallback, requestErr := s.resolveSearchWithContext(ctx, batch[0].group, batch[0].transport, searchURL, batch[0].headers)
+		response, usedBrowserFallback, browserFallbackErr, requestErr := s.resolveSearchWithContext(ctx, batch[0].group, batch[0].transport, searchURL, batch[0].headers)
+		_ = browserFallbackErr
 		if usedBrowserFallback {
 			usedBrowserOverall = true
 		}

@@ -44,7 +44,7 @@ type httpDoer interface {
 }
 
 type browserRequester interface {
-	RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error)
+	RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, string, error)
 }
 
 type groupTransport string

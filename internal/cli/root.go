@@ -110,6 +110,7 @@ func NewRootCommand(version, commit, date string, logger *zap.Logger) *cobra.Com
 	v.AutomaticEnv()
 
 	cmd.AddCommand(newGenerateCommand(v, logger))
+	cmd.AddCommand(newDoctorCommand(v, logger))
 
 	return cmd
 }

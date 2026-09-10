@@ -196,7 +196,7 @@ func (s *StatusService) resolveReleaseRequestWithRetry(ctx context.Context, grou
 			return searchStatusResponse{}, false, err
 		}
 
-		response, usedBrowserFallback, requestErr := s.resolveSearchWithContext(ctx, group, transport, requestURL, headers)
+		response, usedBrowserFallback, _, requestErr := s.resolveSearchWithContext(ctx, group, transport, requestURL, headers)
 		if requestErr != nil {
 			return searchStatusResponse{}, usedBrowserFallback, requestErr
 		}

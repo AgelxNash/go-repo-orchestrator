@@ -306,9 +306,9 @@ func validateBrowserResponseHeaders(headers map[string]string) error {
 	return nil
 }
 
-func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error) {
+func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, string, error) {
 	if r == nil {
-		return 0, nil, nil, errors.New("playwright runtime равен nil")
+		return 0, nil, nil, "", errors.New("playwright runtime равен nil")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -320,12 +320,12 @@ func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, h
 	r.mu.Unlock()
 
 	if !started || browser == nil {
-		return 0, nil, nil, errors.New("playwright runtime не запущен")
+		return 0, nil, nil, "", errors.New("playwright runtime не запущен")
 	}
 
-	browserContext, mustClose, err := selectContextForRequest(browser, requestURL)
+	browserContext, _, mustClose, err := selectContextForRequest(browser, requestURL)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, "", err
 	}
 	if mustClose {
 		defer func() {
@@ -346,7 +346,7 @@ func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, h
 
 	response, err := requestCtx.Get(requestURL, options)
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("ошибка get-запроса playwright: %w", err)
+		return 0, nil, nil, "", fmt.Errorf("ошибка get-запроса playwright: %w", err)
 	}
 	defer func() {
 		_ = response.Dispose()
@@ -354,39 +354,89 @@ func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, h
 
 	responseHeaders := response.Headers()
 	if err := validateBrowserResponseHeaders(responseHeaders); err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, "", err
 	}
 
 	body, err := response.Body()
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("прочитать тело ответа playwright: %w", err)
+		return 0, nil, nil, "", fmt.Errorf("прочитать тело ответа playwright: %w", err)
 	}
 
-	return response.Status(), response.Headers(), body, nil
+	return response.Status(), response.Headers(), body, response.URL(), nil
 }
 
-func selectContextForRequest(browser playwright.Browser, requestURL string) (playwright.BrowserContext, bool, error) {
+// ContextsSnapshot описывает контексты браузера относительно запрошенного URL —
+// диагностическая информация для команды doctor (без содержимого кук).
+type ContextsSnapshot struct {
+	Total          int
+	WithCookies    int
+	SelectedIndex  int
+	CreatedContext bool
+}
+
+// SnapshotContexts возвращает диагностический срез контекстов браузера: сколько
+// их, у скольких есть куки для requestURL и какой был бы выбран для запроса
+// (та же логика выбора, что в RequestGET; без содержимого кук).
+func (r *PlaywrightRuntime) SnapshotContexts(requestURL string) (ContextsSnapshot, error) {
+	if r == nil {
+		return ContextsSnapshot{}, errors.New("playwright runtime равен nil")
+	}
+
+	r.mu.Lock()
+	started := r.started
+	browser := r.browser
+	r.mu.Unlock()
+
+	if !started || browser == nil {
+		return ContextsSnapshot{}, errors.New("playwright runtime не запущен")
+	}
+
+	snapshot := ContextsSnapshot{SelectedIndex: -1}
 	contexts := browser.Contexts()
+	snapshot.Total = len(contexts)
 	for _, ctx := range contexts {
+		cookies, err := ctx.Cookies(requestURL)
+		if err == nil && len(cookies) > 0 {
+			snapshot.WithCookies++
+		}
+	}
+
+	selected, selectedIndex, mustClose, err := selectContextForRequest(browser, requestURL)
+	if err != nil {
+		return snapshot, err
+	}
+	if mustClose {
+		snapshot.CreatedContext = true
+		_ = selected.Close()
+	} else {
+		snapshot.SelectedIndex = selectedIndex
+	}
+
+	return snapshot, nil
+}
+
+func selectContextForRequest(browser playwright.Browser, requestURL string) (playwright.BrowserContext, int, bool, error) {
+	contexts := browser.Contexts()
+	for idx, ctx := range contexts {
 		cookies, err := ctx.Cookies(requestURL)
 		if err != nil {
 			continue
 		}
 		if len(cookies) > 0 {
-			return ctx, false, nil
+			return ctx, idx, false, nil
 		}
 	}
 
 	if len(contexts) > 0 {
-		return contexts[0], false, nil
+		return contexts[0], 0, false, nil
 	}
 
 	ctx, err := browser.NewContext()
 	if err != nil {
-		return nil, false, fmt.Errorf("создать browser context playwright: %w", err)
+		return nil, -1, false, fmt.Errorf("создать browser context playwright: %w", err)
 	}
 
-	return ctx, true, nil
+	return ctx, -1, true, nil
 }
 
 func (r *PlaywrightRuntime) Started() bool {
