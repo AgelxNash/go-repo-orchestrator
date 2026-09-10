@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -450,6 +451,16 @@ func validateBrowserCDPURL(raw string) error {
 
 	if parsed.Host == "" {
 		return errors.New("требуется host")
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return errors.New("требуется host")
+	}
+
+	address := net.ParseIP(host)
+	if address == nil || !address.IsLoopback() {
+		return fmt.Errorf("cdp host %q должен быть loopback IP-адресом", host)
 	}
 
 	return nil

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +30,8 @@ type playwrightSession struct {
 }
 
 type runtimeMode string
+
+const maxBrowserResponseBytes = 4 << 20
 
 const (
 	runtimeModeLaunch runtimeMode = "launch"
@@ -165,6 +169,14 @@ func (r *PlaywrightRuntime) Start() error {
 		r.logger.Debug("cdp preflight", fields...)
 	}
 
+	if strings.TrimSpace(r.cdpURL) != "" && !isAllowedCDPPreflight(preflight) {
+		message := preflight.message
+		if message == "" {
+			message = preflight.class
+		}
+		return fmt.Errorf("проверка CDP endpoint не пройдена: %s", message)
+	}
+
 	runOptions := r.runOptions()
 	session, err := r.startFn(r.cdpURL, runOptions)
 	if err != nil && isPlaywrightRuntimeMissingError(err.Error()) {
@@ -282,6 +294,18 @@ func (r *PlaywrightRuntime) Close() error {
 	return err
 }
 
+func validateBrowserResponseHeaders(headers map[string]string) error {
+	contentLength := strings.TrimSpace(headers["content-length"])
+	if contentLength == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(contentLength, 10, 64)
+	if err == nil && parsed > maxBrowserResponseBytes {
+		return fmt.Errorf("тело ответа playwright превышает лимит %d байт", maxBrowserResponseBytes)
+	}
+	return nil
+}
+
 func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, headers map[string]string) (int, map[string]string, []byte, error) {
 	if r == nil {
 		return 0, nil, nil, errors.New("playwright runtime равен nil")
@@ -327,6 +351,11 @@ func (r *PlaywrightRuntime) RequestGET(ctx context.Context, requestURL string, h
 	defer func() {
 		_ = response.Dispose()
 	}()
+
+	responseHeaders := response.Headers()
+	if err := validateBrowserResponseHeaders(responseHeaders); err != nil {
+		return 0, nil, nil, err
+	}
 
 	body, err := response.Body()
 	if err != nil {
@@ -477,6 +506,10 @@ type cdpPreflightResult struct {
 	message string
 }
 
+func isAllowedCDPPreflight(result cdpPreflightResult) bool {
+	return result.class == "cdp_endpoint_detected" || result.class == "allowed_ws_endpoint"
+}
+
 func runCDPPreflight(rawCDPURL string) cdpPreflightResult {
 	rawCDPURL = strings.TrimSpace(rawCDPURL)
 	if rawCDPURL == "" {
@@ -488,11 +521,15 @@ func runCDPPreflight(rawCDPURL string) cdpPreflightResult {
 		return cdpPreflightResult{step: "parse", class: "invalid_url", message: "parse cdp url failed"}
 	}
 
+	if ip := net.ParseIP(parsed.Hostname()); ip == nil || !ip.IsLoopback() {
+		return cdpPreflightResult{step: "preflight", class: "invalid_endpoint", message: "cdp endpoint must use loopback IP"}
+	}
+
 	switch parsed.Scheme {
 	case "http", "https":
 		return probeHTTPCDPVersion(parsed)
 	case "ws", "wss":
-		return cdpPreflightResult{step: "preflight", class: "skipped_ws_endpoint", message: "ws/wss endpoint preflight skipped"}
+		return cdpPreflightResult{step: "preflight", class: "allowed_ws_endpoint", message: "loopback ws/wss endpoint accepted"}
 	default:
 		return cdpPreflightResult{step: "preflight", class: "unsupported_scheme", message: "unsupported cdp scheme"}
 	}
@@ -509,7 +546,12 @@ func probeHTTPCDPVersion(parsed *url.URL) cdpPreflightResult {
 		return cdpPreflightResult{step: "http_probe", class: "request_build_failed", message: "unable to create cdp probe request"}
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return cdpPreflightResult{step: "http_probe", class: "endpoint_unreachable", message: sanitizeCDPErrorMessage(err.Error())}
@@ -535,8 +577,15 @@ func probeHTTPCDPVersion(parsed *url.URL) cdpPreflightResult {
 		return cdpPreflightResult{step: "http_probe", class: "non_cdp_response", message: "endpoint responds but is not chromium cdp"}
 	}
 
-	if strings.TrimSpace(payload.WebSocketDebuggerURL) == "" {
-		return cdpPreflightResult{step: "http_probe", class: "non_cdp_response", message: "missing webSocketDebuggerUrl in cdp response"}
+	webSocketURL, err := url.Parse(strings.TrimSpace(payload.WebSocketDebuggerURL))
+	if err != nil || webSocketURL.Hostname() == "" {
+		return cdpPreflightResult{step: "http_probe", class: "non_cdp_response", message: "invalid webSocketDebuggerUrl in cdp response"}
+	}
+	if webSocketURL.Scheme != "ws" && webSocketURL.Scheme != "wss" {
+		return cdpPreflightResult{step: "http_probe", class: "non_cdp_response", message: "unsupported webSocketDebuggerUrl scheme in cdp response"}
+	}
+	if ip := net.ParseIP(webSocketURL.Hostname()); ip == nil || !ip.IsLoopback() {
+		return cdpPreflightResult{step: "http_probe", class: "non_cdp_response", message: "webSocketDebuggerUrl is not loopback"}
 	}
 
 	if strings.TrimSpace(payload.Browser) == "" {

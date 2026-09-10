@@ -11,6 +11,17 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestValidateBrowserResponseHeadersRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	if err := validateBrowserResponseHeaders(map[string]string{"content-length": "4194305"}); err == nil {
+		t.Fatal("expected oversized browser response to be rejected")
+	}
+	if err := validateBrowserResponseHeaders(map[string]string{"content-length": "4194304"}); err != nil {
+		t.Fatalf("expected response at limit to pass: %v", err)
+	}
+}
+
 func TestPlaywrightRuntimeStartAndClose(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +129,23 @@ func TestPlaywrightRuntimeUsesCDPModeWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestPlaywrightRuntimeBlocksNonLoopbackWebSocketCDP(t *testing.T) {
+	t.Parallel()
+
+	called := 0
+	runtime := newPlaywrightRuntimeWithStartFn("ws://example.org:9222/devtools/browser/demo", func(cdpURL string, _ *playwright.RunOptions) (playwrightSession, error) {
+		called++
+		return playwrightSession{}, errors.New("unexpected connect")
+	})
+
+	if err := runtime.Start(); err == nil {
+		t.Fatal("expected non-loopback websocket CDP endpoint to be rejected")
+	}
+	if called != 0 {
+		t.Fatalf("expected websocket CDP connect not to be called, got %d calls", called)
+	}
+}
+
 func TestPlaywrightRuntimeWrapsCDPError(t *testing.T) {
 	t.Parallel()
 
@@ -183,7 +211,7 @@ func TestPlaywrightRuntimeWrapsCDPDriverMissingWhenEndpointReachable(t *testing.
 func TestPlaywrightRuntimeWrapsCDPErrorWithoutSecrets(t *testing.T) {
 	t.Parallel()
 
-	runtime := newPlaywrightRuntimeWithStartFn("wss://user:token@example.org/devtools/browser/id?token=secret", func(cdpURL string, _ *playwright.RunOptions) (playwrightSession, error) {
+	runtime := newPlaywrightRuntimeWithStartFn("wss://user:token@127.0.0.1:9222/devtools/browser/id?token=secret", func(cdpURL string, _ *playwright.RunOptions) (playwrightSession, error) {
 		return playwrightSession{}, errors.New("auth failed")
 	})
 
@@ -196,7 +224,7 @@ func TestPlaywrightRuntimeWrapsCDPErrorWithoutSecrets(t *testing.T) {
 	if strings.Contains(msg, "user") || strings.Contains(msg, "token") || strings.Contains(msg, "secret") {
 		t.Fatalf("expected credentials and query to be hidden, got: %v", err)
 	}
-	if !strings.Contains(msg, "wss://example.org") {
+	if !strings.Contains(msg, "wss://127.0.0.1:9222") {
 		t.Fatalf("expected sanitized cdp endpoint in error, got: %v", err)
 	}
 }
@@ -222,7 +250,7 @@ func TestPlaywrightRuntimeWrapsCDPErrorWithoutRawURLOnParseFailure(t *testing.T)
 func TestPlaywrightRuntimeWrapsCDPErrorDoesNotLeakRawDriverErrorURL(t *testing.T) {
 	t.Parallel()
 
-	const rawCDPURL = "wss://user:super-secret@example.org:9222/devtools/browser/id?token=top-secret" //nolint:gosec // тестовая константа: проверка маскировки кредов в URL при ошибках
+	const rawCDPURL = "wss://user:super-secret@127.0.0.1:9222/devtools/browser/id?token=top-secret" //nolint:gosec // тестовая константа: проверка маскировки кредов в URL при ошибках
 
 	runtime := newPlaywrightRuntimeWithStartFn(rawCDPURL, func(cdpURL string, _ *playwright.RunOptions) (playwrightSession, error) {
 		return playwrightSession{}, errors.New("driver connect failed for " + cdpURL)
@@ -243,7 +271,7 @@ func TestPlaywrightRuntimeWrapsCDPErrorDoesNotLeakRawDriverErrorURL(t *testing.T
 	if strings.Contains(msg, "/devtools/browser/id") {
 		t.Fatalf("expected cdp path from raw driver error to be hidden, got: %v", err)
 	}
-	if !strings.Contains(msg, "wss://example.org:9222") {
+	if !strings.Contains(msg, "wss://127.0.0.1:9222") {
 		t.Fatalf("expected sanitized cdp endpoint in error, got: %v", err)
 	}
 }
@@ -254,6 +282,34 @@ func TestRunCDPPreflightEndpointUnreachable(t *testing.T) {
 	result := runCDPPreflight("http://127.0.0.1:1")
 	if result.class != "endpoint_unreachable" {
 		t.Fatalf("expected endpoint_unreachable, got %q", result.class)
+	}
+}
+
+func TestRunCDPPreflightRejectsNonLoopbackBeforeNetwork(t *testing.T) {
+	t.Parallel()
+
+	result := runCDPPreflight("http://example.org:9222")
+	if result.class != "invalid_endpoint" {
+		t.Fatalf("expected invalid_endpoint, got %q", result.class)
+	}
+}
+
+func TestRunCDPPreflightRejectsRedirect(t *testing.T) {
+	t.Parallel()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("redirect target must not receive a CDP preflight request")
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/json/version", http.StatusFound)
+	}))
+	defer source.Close()
+
+	result := runCDPPreflight(source.URL)
+	if result.class != "unexpected_status" {
+		t.Fatalf("expected unexpected_status for redirect response, got %q", result.class)
 	}
 }
 
@@ -293,18 +349,21 @@ func TestRunCDPPreflightDetectsCDPEndpoint(t *testing.T) {
 	}
 }
 
-func TestPlaywrightRuntimeSkipsPreflightWhenDebugDisabled(t *testing.T) {
+func TestPlaywrightRuntimeBlocksCDPConnectWhenPreflightFails(t *testing.T) {
 	t.Parallel()
 
 	called := 0
 	runtime := newPlaywrightRuntimeWithStartFn("http://127.0.0.1:1", func(cdpURL string, _ *playwright.RunOptions) (playwrightSession, error) {
 		called++
-		return playwrightSession{}, errors.New("connection refused")
+		return playwrightSession{}, errors.New("unexpected connect")
 	})
 
-	_ = runtime.Start()
-	if called != 1 {
-		t.Fatalf("expected start function call, got %d", called)
+	err := runtime.Start()
+	if err == nil {
+		t.Fatal("expected failed CDP preflight")
+	}
+	if called != 0 {
+		t.Fatalf("expected CDP connect not to be called, got %d calls", called)
 	}
 }
 

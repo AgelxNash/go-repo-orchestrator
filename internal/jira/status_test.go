@@ -94,6 +94,53 @@ func TestBuildSearchStatusURL(t *testing.T) {
 	}
 }
 
+func TestJiraHTTPClientRejectsCrossOriginRedirect(t *testing.T) {
+	t.Parallel()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("cross-origin redirect target must not receive a request")
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/login", http.StatusFound)
+	}))
+	defer source.Close()
+
+	client := newJiraHTTPClient(time.Second, nil)
+	resp, err := client.Get(source.URL + "/rest/api/2/search")
+	if resp != nil {
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+	}
+	if err == nil {
+		t.Fatal("expected cross-origin redirect to be rejected")
+	}
+	if !strings.Contains(err.Error(), "другой origin") {
+		t.Fatalf("unexpected redirect error: %v", err)
+	}
+}
+
+func TestResolveStatusRejectsOversizedHTTPResponse(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(strings.Repeat("x", maxJiraResponseBytes+1)))
+	}))
+	defer server.Close()
+
+	svc := NewStatusService(0, mustGroupConfigs(t, []config.JiraConfig{{Group: "TASKS", URL: server.URL}}))
+	result := svc.ResolveStatus("TASKS", "", server.URL, "OPS-OVERSIZED")
+	if result.State != StatusStateError {
+		t.Fatalf("expected error state for oversized response, got %+v", result)
+	}
+	if result.Reason != StatusReasonResponseTooLarge {
+		t.Fatalf("expected response_too_large reason, got %+v", result)
+	}
+}
+
 func TestResolveStatusUsesHTTPTransportAndCache(t *testing.T) {
 	t.Parallel()
 

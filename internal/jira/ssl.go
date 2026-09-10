@@ -68,10 +68,27 @@ func buildGroupHTTPClient(timeout time.Duration, ssl config.JiraSSL) (*http.Clie
 		tlsConf.Certificates = []tls.Certificate{cert}
 	}
 
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{TLSClientConfig: tlsConf},
-	}, nil
+	return newJiraHTTPClient(timeout, &http.Transport{TLSClientConfig: tlsConf}), nil
+}
+
+func newJiraHTTPClient(timeout time.Duration, transport http.RoundTripper) *http.Client {
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) == 0 {
+				return nil
+			}
+			previous := via[len(via)-1].URL
+			if req.URL.Scheme != previous.Scheme || req.URL.Host != previous.Host {
+				return fmt.Errorf("запрещён redirect Jira на другой origin: %s", req.URL.Redacted())
+			}
+			return nil
+		},
+	}
+	if transport != nil {
+		client.Transport = transport
+	}
+	return client
 }
 
 // certPoolFromPEM создаёт пул доверенных сертификатов из PEM-данных.

@@ -158,6 +158,55 @@ func TestBuildGroupHTTPClientRequiresClientCert(t *testing.T) {
 	}
 }
 
+func TestBuildGroupHTTPClientRejectsCrossOriginRedirect(t *testing.T) {
+	t.Parallel()
+
+	caCert, caKey := genTestCA(t)
+	client := genTestCert(t, caCert, caKey, "gbc-client")
+	serverCert := genTestCert(t, caCert, caKey, "localhost")
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caCert)
+
+	var targetRequests int
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetRequests++
+		_, _ = w.Write([]byte("unexpected target request"))
+	}))
+	target.TLS = &tls.Config{
+		Certificates: []tls.Certificate{certFromPair(t, serverCert)},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caPool,
+	}
+	target.StartTLS()
+	defer target.Close()
+
+	source := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/redirected", http.StatusFound)
+	}))
+	source.TLS = &tls.Config{Certificates: []tls.Certificate{certFromPair(t, serverCert)}}
+	source.StartTLS()
+	defer source.Close()
+
+	httpClient, err := buildGroupHTTPClient(time.Second, config.JiraSSL{
+		ClientCert: writeTemp(t, "client.pem", concatPEM(client)),
+		CACert:     writeTemp(t, "ca.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})),
+	})
+	if err != nil {
+		t.Fatalf("buildGroupHTTPClient: %v", err)
+	}
+
+	resp, err := httpClient.Get(source.URL + "/search")
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if err == nil {
+		t.Fatal("expected cross-origin redirect to be rejected")
+	}
+	if targetRequests != 0 {
+		t.Fatalf("expected redirect target to receive no requests, got %d", targetRequests)
+	}
+}
+
 func TestBuildGroupHTTPClientCombinedPEM(t *testing.T) {
 	t.Parallel()
 
