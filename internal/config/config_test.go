@@ -431,6 +431,37 @@ func TestLoadFailsOnInvalidBrowserCDPURL(t *testing.T) {
 	}
 }
 
+func TestValidateBrowserCDPURLAcceptsLoopback(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"http://127.0.0.1:9222",
+		"http://127.10.20.30:9222",
+		"ws://[::1]:9222/devtools/browser/test",
+	} {
+		if err := validateBrowserCDPURL(raw); err != nil {
+			t.Errorf("validateBrowserCDPURL(%q) returned error: %v", raw, err)
+		}
+	}
+}
+
+func TestValidateBrowserCDPURLRejectsNonLoopback(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"http://0.0.0.0:9222",
+		"http://10.0.0.5:9222",
+		"http://169.254.169.254:9222",
+		"http://[::]:9222",
+		"http://[fd00::1]:9222",
+		"https://example.com:9222",
+	} {
+		if err := validateBrowserCDPURL(raw); err == nil {
+			t.Errorf("validateBrowserCDPURL(%q) accepted non-loopback host", raw)
+		}
+	}
+}
+
 func TestLoadFailsOnUnknownRootConfigKey(t *testing.T) {
 	t.Parallel()
 

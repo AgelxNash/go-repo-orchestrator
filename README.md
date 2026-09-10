@@ -212,7 +212,7 @@ go install github.com/agelxnash/go-repo-orchestrator/cmd/go-repo-orchestrator@la
   - `token` — API-токен для Bearer-аутентификации (если указан, добавляется заголовок `Authorization: Bearer <token>`).
   - `login.username` / `login.password` — учетные данные для Basic Auth (используются, если оба поля заданы и `token` пуст).
   - `type` — вспомогательное поле конфигурации, не влияющее на runtime-логику (может быть использовано для документирования или будущих расширений).
-- `browser.cdp_url` — URL для подключения к уже запущенному Chromium через CDP (например, `"http://localhost:9222"`). Используется при `playwright: true`.
+- `browser.cdp_url` — URL для подключения к уже запущенному Chromium через CDP (например, `"http://127.0.0.1:9222"`). Используется при `playwright: true`. Поддерживаются только loopback-адреса (`127.0.0.1`, `[::1]`).
 
 ### Связь Jira-групп с ветками
 
@@ -313,7 +313,7 @@ jira:
     playwright: true
 
 browser:
-  cdp_url: "http://localhost:9222"
+  cdp_url: "http://127.0.0.1:9222"
 ```
 
 **HTTP с Bearer-токеном:**
@@ -386,7 +386,9 @@ $env:PROFILE_DIR = "$env:APPDATA\go-repo-orchestrator-chrome-profile"
 
 **Зачем отдельный `--user-data-dir`:** чтобы запущенный для CDP браузер не конфликтовал с вашим основным профилем Chrome/Chromium (расширения, история, куки). После завершения работы с оркестратором можно безопасно удалить эту папку.
 
-Убедитесь, что `browser.cdp_url` в конфиге указывает на `http://localhost:9222` (значение по умолчанию).
+Убедитесь, что `browser.cdp_url` в конфиге указывает на `http://127.0.0.1:9222`.
+
+**Только loopback-эндпоинты:** `browser.cdp_url` принимает исключительно loopback IP (`127.0.0.1`, `[::1]`) — имя `localhost` и внешние адреса отклоняются валидацией конфига. Preflight дополнительно проверяет, что `webSocketDebuggerUrl` из ответа `/json/version` указывает на loopback и использует схему `ws`/`wss`; проваленная проверка блокирует подключение. Это защищает от подключения к посторонним debug-эндпоинтам.
 
 ### Каталог состояния
 
