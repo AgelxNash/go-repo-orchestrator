@@ -51,6 +51,19 @@ jira:
 #       # client_key_password: "..."               # для зашифрованного PEM-ключа
 #       # ca_cert: /etc/ssl/corp/root-ca.pem       # корпоративный CA
 #       # verify: false                            # только для тестовых сред (по умолчанию true)
+#
+# Подстановка переменных окружения (синтаксис docker-compose): во всех строковых
+# значениях конфига поддержаны плейсхолдеры ${VAR} и ${VAR:-default}. Это позволяет
+# коммитить конфиг в общий репозиторий, а секреты держать в окружении:
+#   - group: "MYPROJ"
+#     url: "https://jira.corp.local"
+#     token: ${MYPROJ_JIRA_TOKEN}                  # переменная обязательна: без неё старт упадёт с понятной ошибкой
+#     login:
+#       username: ${MYPROJ_JIRA_USER:-}            # пустой дефолт легализует необязательное поле
+#       password: ${MYPROJ_JIRA_PASSWORD:-}
+#     ssl:
+#       client_cert: ${MYPROJ_CERT:-/etc/ssl/corp/jira-client.pem}
+# Литеральный `$` экранируется как `$$` (для regex-правил, где `$` — якорь конца строки).
 
 repos:
   - name: 'Repo orchestrator'

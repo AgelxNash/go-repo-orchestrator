@@ -8,6 +8,8 @@
 
 ### Added
 
+- Команда `doctor jira <ISSUE-KEY>`: один запрос статуса Jira-задачи с полным трейсом (транспорт, CDP preflight и выбор контекста для browser-групп, HTTP-статус/content-type/final URL, фрагмент тела, вердикт классификатора auth, факт и причина browser→HTTP fallback) — без запуска TUI и без секретов в выводе.
+- Подстановка переменных окружения в значениях YAML-конфига: плейсхолдеры `${VAR}` и `${VAR:-default}` (синтаксис docker-compose) во всех строковых значениях; незаданная переменная без дефолта — понятная ошибка на старте с именем переменной и путём ключа; `$$` экранирует литеральный `$`.
 - CI: `make test-race`, coverage-профиль и artifact `coverage-profile` в GitHub Actions.
 - CI: `make vulncheck` и `govulncheck` в `ci / go-checks`.
 - CI: расширенный набор `golangci-lint` (`gosec`, `errorlint`, `bodyclose`, `copyloopvar`, `misspell`, `nolintlint`, `revive`).
@@ -17,6 +19,7 @@
 
 ### Changed
 
+- Удалены legacy-placeholder директории `cmd/git-branch-cleaner/` и `internal/backup/`; `make check` теперь проверяет отсутствие пустых каталогов под `cmd/` и `internal/`.
 - Jira status prefetch стал context-aware: отмена операции из TUI доходит до batch-запросов статусов.
 - `internal/jira/status.go` разделён на сфокусированные файлы без изменения поведения.
 - `internal/usecase/branch_cleaner.go` разделён на сфокусированные файлы без изменения поведения.
@@ -27,6 +30,9 @@
 
 - `govulncheck` добавлен в основной CI quality gate.
 - Race detector добавлен в основной CI test-run.
+- Jira HTTP-транспорт (общий и mTLS per-group клиенты) запрещает redirect со сменой origin — защита от утечки `Authorization` на посторонний host.
+- CDP-подключение ограничено loopback-эндпоинтами: `browser.cdp_url` валидируется на loopback IP, `webSocketDebuggerUrl` из `/json/version` проверяется на loopback и `ws`/`wss`, проваленный preflight блокирует запуск.
+- Лимит тела ответа Jira 4 МБ на HTTP- и browser-путях (oversized классифицируется как постоянная ошибка `response_too_large`, не как временный сбой) и guard пагинации релизов (не более 1000 страниц).
 
 ## История релизов
 

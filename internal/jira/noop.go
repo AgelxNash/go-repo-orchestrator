@@ -31,6 +31,7 @@ const (
 	StatusReasonHTTPError                          StatusReason = "http_error"
 	StatusReasonTransportError                     StatusReason = "transport_error"
 	StatusReasonResponseParseErr                   StatusReason = "response_parse_error"
+	StatusReasonResponseTooLarge                   StatusReason = "response_too_large"
 	StatusReasonBrowserUnavailableHTTPFallback     StatusReason = "browser_unavailable_http_fallback"
 	StatusReasonBrowserUnavailableHTTPAuthRequired StatusReason = "browser_unavailable_http_auth_required"
 	StatusReasonBrowserUnavailableHTTPError        StatusReason = "browser_unavailable_http_error"

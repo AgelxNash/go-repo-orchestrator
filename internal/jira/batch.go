@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -192,12 +193,21 @@ func (s *StatusService) fetchAndStoreBatch(ctx context.Context, batch []prepared
 			zap.Int("startAt", startAt),
 		)
 
-		response, usedBrowserFallback, requestErr := s.resolveSearchWithContext(ctx, batch[0].group, batch[0].transport, searchURL, batch[0].headers)
+		response, usedBrowserFallback, browserFallbackErr, requestErr := s.resolveSearchWithContext(ctx, batch[0].group, batch[0].transport, searchURL, batch[0].headers)
+		_ = browserFallbackErr
 		if usedBrowserFallback {
 			usedBrowserOverall = true
 		}
 
 		if requestErr != nil {
+			if errors.Is(requestErr, errJiraResponseTooLarge) {
+				result := StatusResult{Status: unknownStatus, State: StatusStateError, Reason: StatusReasonResponseTooLarge}
+				for _, req := range batch {
+					s.store(req.cacheKey, result)
+				}
+				return
+			}
+
 			s.logger.Warn("jira request failed",
 				zap.String("url", searchURL),
 				zap.String("group", batch[0].group),

@@ -33,6 +33,9 @@ jobs:
             exit 1
           fi
 
+      - name: Repository structure
+        run: make check-empty-dirs
+
       - name: Test (race detector + coverage)
         run: |
           pkg_patterns="./cmd/... ./internal/..."
