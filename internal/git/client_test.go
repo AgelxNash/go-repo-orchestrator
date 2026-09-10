@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
+	"github.com/agelxnash/go-repo-orchestrator/internal/testenv"
 )
 
 func TestResolveRepoPathRejectsNestedSubdir(t *testing.T) {
@@ -510,6 +511,7 @@ func runCmd(t *testing.T, workdir string, command string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(command, args...)
 	cmd.Dir = workdir
+	cmd.Env = testenv.GitSanitizedEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("command failed: %s %v\n%s\n%v", command, args, string(out), err)

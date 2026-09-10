@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/agelxnash/go-repo-orchestrator/internal/testenv"
 )
 
 func TestLoadAndRules(t *testing.T) {
@@ -822,6 +824,7 @@ func runCommand(t *testing.T, workdir string, name string, args ...string) {
 
 	cmd := exec.Command(name, args...)
 	cmd.Dir = workdir
+	cmd.Env = testenv.GitSanitizedEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("command failed: %s %v\n%s\n%v", name, args, string(out), err)

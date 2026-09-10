@@ -26,6 +26,10 @@
 - `Model.Update` разделён на message handlers; `model.go` уменьшен, поведение TUI сохранено.
 - TUI зависит от узкого `cleanerPort` вместо конкретного `*usecase.Cleaner`.
 
+### Fixed
+
+- Изоляция git-окружения в тестах и pre-push хуке: переменные `GIT_*` (в частности `GIT_DIR` из хука worktree) больше не наследуются git-подпроцессами тестов и не уводят их из временных каталогов в реальный репозиторий (#62).
+
 ### Security
 
 - `govulncheck` добавлен в основной CI quality gate.
