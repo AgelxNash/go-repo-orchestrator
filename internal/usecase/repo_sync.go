@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
 	"github.com/agelxnash/go-repo-orchestrator/internal/model"
@@ -87,14 +86,8 @@ func (c *Cleaner) resolveRepoForStat(ctx context.Context, repo config.RepoConfig
 		}
 	}
 
-	if repo.Upstream != "" && managedPath != "" {
-		if remoteErr := c.git.EnsureRemote(ctx, managedPath, "upstream", repo.Upstream); remoteErr != nil {
-			if warning.Code == "" {
-				warning = newRemoteSyncWarning(remoteErr)
-			}
-		}
-	}
-
+	// Для status (resolveRepoForStat) намеренно не вызываем EnsureRemote,
+	// гарантируя строго read-only поведение без изменения конфигурации репозитория.
 	return managedPath, warning, nil
 }
 
@@ -147,6 +140,8 @@ func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig
 		if remoteErr := c.git.EnsureRemote(ctx, managedPath, "upstream", repo.Upstream); remoteErr != nil {
 			if warning.Code == "" {
 				warning = newRemoteSyncWarning(remoteErr)
+			} else {
+				warning.Message = fmt.Sprintf("%s; настройка upstream не выполнена: %v", warning.Message, remoteErr)
 			}
 		}
 	}
@@ -206,28 +201,13 @@ func (c *Cleaner) FetchAndPullRepo(ctx context.Context, repo config.RepoConfig) 
 	)
 
 	if repo.Upstream != "" {
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-			if err := c.git.FetchRemote(ctx, repoPath, "upstream"); err != nil {
-				upstreamErr = fmt.Errorf("fetch remote upstream: %w", err)
-			}
-		}()
-
-		go func() {
-			defer wg.Done()
-			if err := c.git.FetchAndPull(ctx, repoPath, repo.URL); err != nil {
-				pullErr = fmt.Errorf("выполнить fetch и pull: %w", err)
-			}
-		}()
-
-		wg.Wait()
-	} else {
-		if err := c.git.FetchAndPull(ctx, repoPath, repo.URL); err != nil {
-			pullErr = fmt.Errorf("выполнить fetch и pull: %w", err)
+		if err := c.git.FetchRemote(ctx, repoPath, "upstream"); err != nil {
+			upstreamErr = fmt.Errorf("fetch remote upstream: %w", err)
 		}
+	}
+
+	if err := c.git.FetchAndPull(ctx, repoPath, repo.URL); err != nil {
+		pullErr = fmt.Errorf("выполнить fetch и pull: %w", err)
 	}
 
 	if upstreamErr != nil || pullErr != nil {

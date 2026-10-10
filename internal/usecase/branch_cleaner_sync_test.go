@@ -1763,3 +1763,39 @@ func TestResolveRepoForReadUpstreamEnsureRemoteErrorRecordedInWarning(t *testing
 		t.Fatalf("expected warning message to contain error, got %s", warning.Message)
 	}
 }
+
+func TestResolveRepoForStatDoesNotCallEnsureRemote(t *testing.T) {
+	t.Parallel()
+
+	ensureRemoteCalled := false
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/repo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			ensureRemoteCalled = true
+			return nil
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "repo",
+		Path:     "/tmp/repo",
+		Upstream: "git@example.com:upstream/repo.git",
+	}
+
+	path, warning, err := cleaner.resolveRepoForStat(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "/tmp/repo" {
+		t.Fatalf("expected path /tmp/repo, got %s", path)
+	}
+	if ensureRemoteCalled {
+		t.Fatal("resolveRepoForStat should be strictly read-only and not call EnsureRemote")
+	}
+	if warning.Code != "" {
+		t.Fatalf("expected empty warning, got %s", warning.Code)
+	}
+}

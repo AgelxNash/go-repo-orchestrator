@@ -233,32 +233,55 @@ func newExecCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config.RepoConfig, cmdParts []string, timeout time.Duration) model.ExecResultDTO {
+func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config.RepoConfig, cmdParts []string, timeout time.Duration) (dto model.ExecResultDTO) {
 	initialPath := repo.Path
 	if initialPath == "" && gitClient != nil {
 		initialPath = gitClient.ManagedRepoPath(repo.Name, repo.URL)
 	}
 
-	dto := model.ExecResultDTO{
+	dto = model.ExecResultDTO{
 		Repo: repo.Name,
 		Path: initialPath,
 	}
 
+	start := time.Now()
+	defer func() {
+		durationMS := time.Since(start).Milliseconds()
+		if durationMS == 0 {
+			durationMS = 1
+		}
+		dto.DurationMS = durationMS
+	}()
+
+	repoCtx, repoCancel := context.WithTimeout(parentCtx, timeout)
+	defer repoCancel()
+
 	repoPath := initialPath
 	if gitClient != nil {
-		resolvedPath, err := gitClient.ResolveRepoPath(parentCtx, repo.Name, repo.URL, repo.Path)
+		var resolvedPath string
+		var err error
+
+		if repo.Path != "" {
+			resolvedPath, err = gitClient.ResolveRepoPath(repoCtx, repo.Name, repo.URL, repo.Path)
+		} else {
+			// Для URL-only записей проверяем, существует ли уже локальный кэш,
+			// чтобы исключить сетевой fetch при работе оффлайн.
+			managedPath := gitClient.ManagedRepoPath(repo.Name, repo.URL)
+			if localPath, resolveErr := gitClient.ResolveRepoPath(repoCtx, repo.Name, "", managedPath); resolveErr == nil {
+				resolvedPath = localPath
+			} else {
+				resolvedPath, err = gitClient.EnsureManagedClone(repoCtx, repo.Name, repo.URL)
+			}
+		}
+
 		if err != nil {
 			dto.ExitCode = -1
-			dto.DurationMS = 1
-			dto.Error = fmt.Sprintf("ошибка валидации репозитория: %v", err)
+			dto.Error = fmt.Sprintf("ошибка подготовки репозитория: %v", err)
 			return dto
 		}
 		repoPath = resolvedPath
 		dto.Path = resolvedPath
 	}
-
-	repoCtx, repoCancel := context.WithTimeout(parentCtx, timeout)
-	defer repoCancel()
 
 	cmdName := cmdParts[0]
 	cmdArgs := cmdParts[1:]
@@ -280,13 +303,10 @@ func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config
 	execCmd.Stdout = &stdoutBuf
 	execCmd.Stderr = &stderrBuf
 
-	start := time.Now()
 	runErr := execCmd.Run()
-	durationMS := time.Since(start).Milliseconds()
-	if durationMS == 0 {
-		durationMS = 1
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		killProcessGroup(execCmd)
 	}
-	dto.DurationMS = durationMS
 
 	dto.Stdout = stdoutBuf.String()
 	dto.Stderr = stderrBuf.String()
@@ -306,8 +326,6 @@ func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config
 		} else {
 			dto.Error = runErr.Error()
 		}
-	} else {
-		dto.ExitCode = 0
 	}
 
 	return dto

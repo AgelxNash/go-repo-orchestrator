@@ -212,6 +212,14 @@ func TestSanitizeDiagnosticErrorMasksURLCredentials(t *testing.T) {
 			expected: "fatal: unable to access 'https://github.com/repo.git': Could not resolve host",
 		},
 		{
+			input:    "fatal: unable to access 'https://user:p:a:s:s@github.com/repo.git': Could not resolve host",
+			expected: "fatal: unable to access 'https://github.com/repo.git': Could not resolve host",
+		},
+		{
+			input:    "fatal: unable to access 'ssh://user:secretpass@git.example.com/repo.git': Permission denied",
+			expected: "fatal: unable to access 'ssh://git.example.com/repo.git': Permission denied",
+		},
+		{
 			input:    "fatal: unable to access 'https://ghp_abc123xyz@github.com/repo.git': Permission denied",
 			expected: "fatal: unable to access 'https://github.com/repo.git': Permission denied",
 		},

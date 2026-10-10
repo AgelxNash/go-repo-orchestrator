@@ -336,7 +336,7 @@ func sanitizeRepoURL(raw string) string {
 	return raw
 }
 
-var userinfoInURLRE = regexp.MustCompile(`(https?://)[^:\s/@]+(?::[^@\s/]+)?@`)
+var userinfoInURLRE = regexp.MustCompile(`(?i)(https?://|ssh://)[^\s/@]+@`)
 
 // sanitizeDiagnosticError маскирует учетные данные и токены в URL внутри текстов ошибок git.
 func sanitizeDiagnosticError(msg string) string {
