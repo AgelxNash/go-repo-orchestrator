@@ -11,7 +11,7 @@ import (
 
 // LoadRepoStat быстро (без загрузки веток) получает текущую ветку и статус (dirty/clean).
 func (c *Cleaner) LoadRepoStat(ctx context.Context, repo config.RepoConfig) (model.RepoStat, error) {
-	managedPath, syncWarning, err := c.resolveRepoForRead(ctx, repo)
+	managedPath, syncWarning, err := c.resolveRepoForStat(ctx, repo)
 	if err != nil {
 		return model.RepoStat{}, err
 	}
@@ -39,6 +39,56 @@ func newRemoteSyncWarning(err error) model.RepoWarning {
 		Code:    repoWarningRemoteSyncFailed,
 		Message: fmt.Sprintf("синхронизация remote не выполнена: %v", err),
 	}
+}
+
+func (c *Cleaner) resolveRepoForStat(ctx context.Context, repo config.RepoConfig) (string, model.RepoWarning, error) {
+	var (
+		managedPath string
+		warning     model.RepoWarning
+		err         error
+	)
+
+	switch repo.SourceType() {
+	case "url":
+		var cloneErr error
+		managedPath, cloneErr = c.git.EnsureManagedClone(ctx, repo.Name, repo.URL)
+		if cloneErr != nil {
+			fallbackPath := c.git.ManagedRepoPath(repo.Name, repo.URL)
+			fallbackCtx := context.WithoutCancel(ctx)
+			if _, fallbackErr := c.git.ResolveRepoPath(fallbackCtx, repo.Name, "", fallbackPath); fallbackErr != nil {
+				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", cloneErr)
+			}
+
+			managedPath = fallbackPath
+			warning = newRemoteSyncWarning(cloneErr)
+		}
+
+	case "opensource":
+		// В режиме аудита состояния не вызываем UpdateOpensourceRepo с autoswitch,
+		// чтобы исключить вызовы reset --hard и clean -fd, затирающие локальные изменения.
+		localPath, resolveErr := c.git.ResolveRepoPath(ctx, repo.Name, "", repo.Path)
+		if resolveErr == nil {
+			managedPath = localPath
+		} else {
+			if updateErr := c.git.UpdateOpensourceRepo(ctx, repo.URL, repo.Path, ""); updateErr != nil {
+				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", updateErr)
+			}
+			managedPath, err = c.git.ResolveRepoPath(ctx, repo.Name, "", repo.Path)
+			if err != nil {
+				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
+			}
+		}
+
+	default:
+		managedPath, err = c.git.ResolveRepoPath(ctx, repo.Name, repo.URL, repo.Path)
+		if err != nil {
+			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
+		}
+	}
+
+	// Для status (resolveRepoForStat) намеренно не вызываем EnsureRemote,
+	// гарантируя строго read-only поведение без изменения конфигурации репозитория.
+	return managedPath, warning, nil
 }
 
 func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig) (string, model.RepoWarning, error) {
@@ -87,7 +137,13 @@ func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig
 	}
 
 	if repo.Upstream != "" && managedPath != "" {
-		_ = c.git.EnsureRemote(ctx, managedPath, "upstream", repo.Upstream)
+		if remoteErr := c.git.EnsureRemote(ctx, managedPath, "upstream", repo.Upstream); remoteErr != nil {
+			if warning.Code == "" {
+				warning = newRemoteSyncWarning(remoteErr)
+			} else {
+				warning.Message = fmt.Sprintf("%s; настройка upstream не выполнена: %v", warning.Message, remoteErr)
+			}
+		}
 	}
 
 	return managedPath, warning, nil
@@ -133,19 +189,28 @@ func (c *Cleaner) FetchAndPullRepo(ctx context.Context, repo config.RepoConfig) 
 		}
 	}
 
-	var upstreamErr error
 	if repo.Upstream != "" {
 		if err := c.git.EnsureRemote(ctx, repoPath, "upstream", repo.Upstream); err != nil {
 			return fmt.Errorf("настроить remote upstream: %w", err)
 		}
+	}
+
+	var (
+		upstreamErr error
+		pullErr     error
+	)
+
+	// Синхронизация upstream выполняется best-effort перед pull origin:
+	// сбой обновления upstream не должен блокировать обновление локальной ветки из origin,
+	// а обе ошибки агрегируются через errors.Join.
+	if repo.Upstream != "" {
 		if err := c.git.FetchRemote(ctx, repoPath, "upstream"); err != nil {
 			upstreamErr = fmt.Errorf("fetch remote upstream: %w", err)
 		}
 	}
 
-	pullErr := c.git.FetchAndPull(ctx, repoPath, repo.URL)
-	if pullErr != nil {
-		pullErr = fmt.Errorf("выполнить fetch и pull: %w", pullErr)
+	if err := c.git.FetchAndPull(ctx, repoPath, repo.URL); err != nil {
+		pullErr = fmt.Errorf("выполнить fetch и pull: %w", err)
 	}
 
 	if upstreamErr != nil || pullErr != nil {

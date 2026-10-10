@@ -141,7 +141,7 @@ func newExecCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
 								continue
 							}
 
-							res := runExecInRepo(ctx, j.repo.Name, j.path, commandParts, timeout)
+							res := runExecInRepo(ctx, gitClient, j.repo, commandParts, timeout)
 							results[j.idx] = res
 
 							logger.Debug("executed command in repo",
@@ -233,20 +233,63 @@ func newExecCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func runExecInRepo(parentCtx context.Context, repoName, repoPath string, cmdParts []string, timeout time.Duration) model.ExecResultDTO {
-	dto := model.ExecResultDTO{
-		Repo: repoName,
-		Path: repoPath,
+func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config.RepoConfig, cmdParts []string, timeout time.Duration) (dto model.ExecResultDTO) {
+	initialPath := repo.Path
+	if initialPath == "" && gitClient != nil {
+		initialPath = gitClient.ManagedRepoPath(repo.Name, repo.URL)
 	}
+
+	dto = model.ExecResultDTO{
+		Repo: repo.Name,
+		Path: initialPath,
+	}
+
+	start := time.Now()
+	defer func() {
+		durationMS := time.Since(start).Milliseconds()
+		if durationMS == 0 {
+			durationMS = 1
+		}
+		dto.DurationMS = durationMS
+	}()
 
 	repoCtx, repoCancel := context.WithTimeout(parentCtx, timeout)
 	defer repoCancel()
+
+	repoPath := initialPath
+	if gitClient != nil {
+		var resolvedPath string
+		var err error
+
+		if repo.Path != "" {
+			resolvedPath, err = gitClient.ResolveRepoPath(repoCtx, repo.Name, repo.URL, repo.Path)
+		} else {
+			// Для URL-only записей проверяем, существует ли уже локальный кэш,
+			// чтобы исключить сетевой fetch при работе оффлайн.
+			managedPath := gitClient.ManagedRepoPath(repo.Name, repo.URL)
+			if localPath, resolveErr := gitClient.ResolveRepoPath(repoCtx, repo.Name, "", managedPath); resolveErr == nil {
+				resolvedPath = localPath
+			} else {
+				resolvedPath, err = gitClient.EnsureManagedClone(repoCtx, repo.Name, repo.URL)
+			}
+		}
+
+		if err != nil {
+			dto.ExitCode = -1
+			dto.Error = fmt.Sprintf("ошибка подготовки репозитория: %v", err)
+			return dto
+		}
+		repoPath = resolvedPath
+		dto.Path = resolvedPath
+	}
 
 	cmdName := cmdParts[0]
 	cmdArgs := cmdParts[1:]
 
 	execCmd := exec.CommandContext(repoCtx, cmdName, cmdArgs...)
 	execCmd.Dir = repoPath
+	execCmd.WaitDelay = 2 * time.Second
+	configureProcessGroup(execCmd)
 
 	devNull, err := os.Open(os.DevNull)
 	if err == nil {
@@ -260,13 +303,10 @@ func runExecInRepo(parentCtx context.Context, repoName, repoPath string, cmdPart
 	execCmd.Stdout = &stdoutBuf
 	execCmd.Stderr = &stderrBuf
 
-	start := time.Now()
 	runErr := execCmd.Run()
-	durationMS := time.Since(start).Milliseconds()
-	if durationMS == 0 {
-		durationMS = 1
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		killProcessGroup(execCmd)
 	}
-	dto.DurationMS = durationMS
 
 	dto.Stdout = stdoutBuf.String()
 	dto.Stderr = stderrBuf.String()
