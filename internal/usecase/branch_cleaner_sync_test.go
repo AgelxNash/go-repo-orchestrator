@@ -1683,3 +1683,83 @@ func TestFetchAndPullRepoWithUpstreamEnsureRemoteError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadRepoStatOpensourceDoesNotCallUpdateOpensourceRepoWithAutoswitch(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/opensource-repo", nil
+		},
+		updateOpensourceFn: func(_ context.Context, url, targetPath, branch string) error {
+			updateCalled = true
+			return nil
+		},
+		getRepoStatFn: func(_ context.Context, repoPath string) (model.RepoStat, error) {
+			return model.RepoStat{
+				CurrentBranch: "feature/local",
+				DirtyStats:    model.DirtyStats{Modified: []string{"file.txt"}},
+				Loaded:        true,
+			}, nil
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name: "opensource-modx",
+		URL:  "https://github.com/modx-pro/revolution.git",
+		Path: "/tmp/opensource-repo",
+		Branch: config.Branch{
+			Autoswitch: "3.x",
+		},
+	}
+
+	stat, err := cleaner.LoadRepoStat(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updateCalled {
+		t.Fatal("LoadRepoStat should not call UpdateOpensourceRepo with autoswitch when local path exists")
+	}
+	if !stat.DirtyStats.HasChanges() {
+		t.Fatal("expected dirty stats to be preserved")
+	}
+	if stat.CurrentBranch != "feature/local" {
+		t.Fatalf("expected branch feature/local, got %s", stat.CurrentBranch)
+	}
+}
+
+func TestResolveRepoForReadUpstreamEnsureRemoteErrorRecordedInWarning(t *testing.T) {
+	t.Parallel()
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/repo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			return errors.New("cannot write config")
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "repo",
+		Path:     "/tmp/repo",
+		Upstream: "git@example.com:upstream/repo.git",
+	}
+
+	path, warning, err := cleaner.resolveRepoForRead(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "/tmp/repo" {
+		t.Fatalf("expected path /tmp/repo, got %s", path)
+	}
+	if warning.Code != model.RepoWarningRemoteSyncFailed {
+		t.Fatalf("expected RepoWarningRemoteSyncFailed, got %s", warning.Code)
+	}
+	if !strings.Contains(warning.Message, "cannot write config") {
+		t.Fatalf("expected warning message to contain error, got %s", warning.Message)
+	}
+}

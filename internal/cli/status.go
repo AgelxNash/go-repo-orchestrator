@@ -211,6 +211,12 @@ func inspectRepoStatus(ctx context.Context, repo config.RepoConfig, cleaner *use
 
 	if stat.HasError() {
 		dto.Error = stat.LoadError
+	} else if stat.HasEmptyCloneWarning() {
+		if stat.Warning.Message != "" {
+			dto.Error = stat.Warning.Message
+		} else {
+			dto.Error = "пустой клон без checkout"
+		}
 	} else {
 		dto.Branch = stat.CurrentBranch
 		dto.Dirty = stat.DirtyStats.HasChanges()

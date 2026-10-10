@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -335,6 +336,13 @@ func sanitizeRepoURL(raw string) string {
 	return raw
 }
 
+var userinfoInURLRE = regexp.MustCompile(`(https?://)[^:\s/@]+(?::[^@\s/]+)?@`)
+
+// sanitizeDiagnosticError маскирует учетные данные и токены в URL внутри текстов ошибок git.
+func sanitizeDiagnosticError(msg string) string {
+	return userinfoInURLRE.ReplaceAllString(msg, "$1")
+}
+
 func renderRepoDiagnostics(out io.Writer, repo config.RepoConfig, configDir string, diag git.RepoDiagnostics) {
 	writef(out, "Репозиторий-диагностика: %s\n", repo.Name)
 	writef(out, "\n— Конфиг —\n")
@@ -394,14 +402,14 @@ func renderRepoDiagnostics(out io.Writer, repo config.RepoConfig, configDir stri
 		if diag.FetchErr == "" {
 			writef(out, "fetch --prune origin: ok\n")
 		} else {
-			writef(out, "fetch --prune origin: ОШИБКА:\n%s\n", diag.FetchErr)
+			writef(out, "fetch --prune origin: ОШИБКА:\n%s\n", sanitizeDiagnosticError(diag.FetchErr))
 		}
 	}
 	if diag.UpstreamFetchAttempted {
 		if diag.UpstreamFetchErr == "" {
 			writef(out, "fetch --prune upstream: ok\n")
 		} else {
-			writef(out, "fetch --prune upstream: ОШИБКА:\n%s\n", diag.UpstreamFetchErr)
+			writef(out, "fetch --prune upstream: ОШИБКА:\n%s\n", sanitizeDiagnosticError(diag.UpstreamFetchErr))
 		}
 	}
 	if !diag.FetchAttempted && !diag.UpstreamFetchAttempted {

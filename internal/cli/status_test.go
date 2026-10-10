@@ -403,3 +403,43 @@ func TestStatusCommandDeterministicOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusCommandEmptyCloneTreatedAsError(t *testing.T) {
+	t.Parallel()
+
+	// Создаем пустой git-репозиторий без единого коммита (empty clone)
+	emptyDir := t.TempDir()
+	runShell(t, emptyDir, "git init -q .")
+
+	cfgBody := fmt.Sprintf(`repos:
+  - name: empty-shell
+    path: %s
+`, emptyDir)
+	cfgPath := writeStatusTestConfig(t, cfgBody)
+
+	rendered, err := runStatus(t, "status", "--json", "--ignore-errors", "--config", cfgPath)
+	if err != nil {
+		t.Fatalf("unexpected error with --ignore-errors: %v", err)
+	}
+
+	var report model.StatusReport
+	if jsonErr := json.Unmarshal([]byte(rendered), &report); jsonErr != nil {
+		t.Fatalf("failed to parse json: %v", jsonErr)
+	}
+
+	if report.Total != 1 {
+		t.Fatalf("expected total 1, got %d", report.Total)
+	}
+	if report.Clean != 0 {
+		t.Errorf("empty clone shell should not be classified as clean, got clean=%d", report.Clean)
+	}
+	if report.Errors != 1 {
+		t.Errorf("empty clone shell should be counted in errors, got errors=%d", report.Errors)
+	}
+	if len(report.Repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(report.Repos))
+	}
+	if report.Repos[0].Error == "" {
+		t.Error("expected error field to be set for empty clone shell")
+	}
+}

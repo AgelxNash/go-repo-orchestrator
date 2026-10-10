@@ -411,8 +411,10 @@ func TestExecCommandFailFast(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d", len(report.Results))
 	}
 
-	// Первый упал из-за отсутствия директории
-	if !strings.Contains(report.Results[0].Error, "no such file or directory") {
+	// Первый упал из-за ошибки валидации/отсутствия директории
+	if !strings.Contains(report.Results[0].Error, "no such file or directory") &&
+		!strings.Contains(report.Results[0].Error, "ошибка валидации репозитория") &&
+		!strings.Contains(report.Results[0].Error, "путь не является git-репозиторием") {
 		t.Errorf("expected broken repo error, got: %s", report.Results[0].Error)
 	}
 
@@ -564,5 +566,38 @@ func TestExecCommandTimeout(t *testing.T) {
 	}
 	if !strings.Contains(report.Results[0].Error, "превышен таймаут выполнения") && !strings.Contains(report.Results[0].Error, "signal: killed") {
 		t.Fatalf("expected timeout error message, got: %s", report.Results[0].Error)
+	}
+}
+
+func TestExecCommandRejectsNonGitDirectory(t *testing.T) {
+	t.Parallel()
+
+	// Обычная папка без .git
+	nonGitDir := t.TempDir()
+
+	cfgBody := fmt.Sprintf(`repos:
+  - name: not-a-repo
+    path: %s
+`, nonGitDir)
+	cfgPath := writeExecTestConfig(t, cfgBody)
+
+	stdout, _, err := runExec(t, "exec", "--json", "--config", cfgPath, "--", "ls")
+	if err == nil {
+		t.Fatal("expected error when target repo is not a git directory")
+	}
+
+	var report model.ExecReport
+	if jsonErr := json.Unmarshal([]byte(stdout), &report); jsonErr != nil {
+		t.Fatalf("failed to parse json: %v\noutput:\n%s", jsonErr, stdout)
+	}
+
+	if report.Failed != 1 {
+		t.Fatalf("expected failed 1, got %d", report.Failed)
+	}
+	if len(report.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(report.Results))
+	}
+	if !strings.Contains(report.Results[0].Error, "ошибка валидации репозитория") && !strings.Contains(report.Results[0].Error, "путь не является git-репозиторием") {
+		t.Fatalf("expected git validation error, got: %s", report.Results[0].Error)
 	}
 }

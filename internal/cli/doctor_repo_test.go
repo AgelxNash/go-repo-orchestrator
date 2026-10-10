@@ -199,3 +199,32 @@ func runShell(t *testing.T, dir, command string) {
 		t.Fatalf("command %q in %s failed: %v\n%s", command, dir, err, out)
 	}
 }
+
+func TestSanitizeDiagnosticErrorMasksURLCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "fatal: unable to access 'https://token:secret123@github.com/repo.git': Could not resolve host",
+			expected: "fatal: unable to access 'https://github.com/repo.git': Could not resolve host",
+		},
+		{
+			input:    "fatal: unable to access 'https://ghp_abc123xyz@github.com/repo.git': Permission denied",
+			expected: "fatal: unable to access 'https://github.com/repo.git': Permission denied",
+		},
+		{
+			input:    "fetch --prune origin: connection reset by peer",
+			expected: "fetch --prune origin: connection reset by peer",
+		},
+	}
+
+	for _, tt := range tests {
+		actual := sanitizeDiagnosticError(tt.input)
+		if actual != tt.expected {
+			t.Errorf("input %q:\nexpected: %q\ngot:      %q", tt.input, tt.expected, actual)
+		}
+	}
+}

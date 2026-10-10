@@ -141,7 +141,7 @@ func newExecCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
 								continue
 							}
 
-							res := runExecInRepo(ctx, j.repo.Name, j.path, commandParts, timeout)
+							res := runExecInRepo(ctx, gitClient, j.repo, commandParts, timeout)
 							results[j.idx] = res
 
 							logger.Debug("executed command in repo",
@@ -233,10 +233,28 @@ func newExecCommand(v *viper.Viper, logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func runExecInRepo(parentCtx context.Context, repoName, repoPath string, cmdParts []string, timeout time.Duration) model.ExecResultDTO {
+func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config.RepoConfig, cmdParts []string, timeout time.Duration) model.ExecResultDTO {
+	initialPath := repo.Path
+	if initialPath == "" && gitClient != nil {
+		initialPath = gitClient.ManagedRepoPath(repo.Name, repo.URL)
+	}
+
 	dto := model.ExecResultDTO{
-		Repo: repoName,
-		Path: repoPath,
+		Repo: repo.Name,
+		Path: initialPath,
+	}
+
+	repoPath := initialPath
+	if gitClient != nil {
+		resolvedPath, err := gitClient.ResolveRepoPath(parentCtx, repo.Name, repo.URL, repo.Path)
+		if err != nil {
+			dto.ExitCode = -1
+			dto.DurationMS = 1
+			dto.Error = fmt.Sprintf("ошибка валидации репозитория: %v", err)
+			return dto
+		}
+		repoPath = resolvedPath
+		dto.Path = resolvedPath
 	}
 
 	repoCtx, repoCancel := context.WithTimeout(parentCtx, timeout)
@@ -247,6 +265,8 @@ func runExecInRepo(parentCtx context.Context, repoName, repoPath string, cmdPart
 
 	execCmd := exec.CommandContext(repoCtx, cmdName, cmdArgs...)
 	execCmd.Dir = repoPath
+	execCmd.WaitDelay = 2 * time.Second
+	configureProcessGroup(execCmd)
 
 	devNull, err := os.Open(os.DevNull)
 	if err == nil {
