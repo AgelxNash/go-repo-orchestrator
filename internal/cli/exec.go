@@ -326,6 +326,8 @@ func runExecInRepo(parentCtx context.Context, gitClient *git.Client, repo config
 		} else {
 			dto.Error = runErr.Error()
 		}
+	} else {
+		dto.ExitCode = 0
 	}
 
 	return dto

@@ -200,6 +200,9 @@ func (c *Cleaner) FetchAndPullRepo(ctx context.Context, repo config.RepoConfig) 
 		pullErr     error
 	)
 
+	// Синхронизация upstream выполняется best-effort перед pull origin:
+	// сбой обновления upstream не должен блокировать обновление локальной ветки из origin,
+	// а обе ошибки агрегируются через errors.Join.
 	if repo.Upstream != "" {
 		if err := c.git.FetchRemote(ctx, repoPath, "upstream"); err != nil {
 			upstreamErr = fmt.Errorf("fetch remote upstream: %w", err)
