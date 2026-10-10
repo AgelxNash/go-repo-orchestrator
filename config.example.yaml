@@ -85,6 +85,20 @@ repos:
         # Named-group "MARIADB" соответствует jira.group: 'MARIADB' (см. блок jira выше)
         - '(^|[-/])(?P<MARIADB>(PMM|CONC|MDEV|MCOL|CONCPP|CONJ|CONJS|ODBC|CONPY|R2DBC|MDBF|MXS)\-\d+)'
 
+  # Пример форка с upstream remote (multi-remote / fork-aware):
+  # url — личный форк (remote "origin"), куда отправляются ветки
+  # upstream — оригинальный базовый репозиторий (remote "upstream"), откуда подтягиваются обновления
+  - name: 'MariaDB Connector/C (Fork)'
+    url: git@github.com:my-username/mariadb-connector-c.git
+    upstream: git@github.com:mariadb-corporation/mariadb-connector-c.git
+    path: ./example/mariadb/c-fork
+    branch:
+      keep:
+        - '^(3\.[1-4])'
+        - '^main$'
+      jira:
+        - '(^|[-/])(?P<MARIADB>(PMM|CONC|MDEV|MCOL|CONCPP|CONJ|CONJS|ODBC|CONPY|R2DBC|MDBF|MXS)\-\d+)'
+
 
   - name: 'MariaDB Connector/J'
     url: git@github.com:mariadb-corporation/mariadb-connector-j.git

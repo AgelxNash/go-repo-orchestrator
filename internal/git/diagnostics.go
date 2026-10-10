@@ -28,6 +28,9 @@ type RepoDiagnostics struct {
 
 	FetchAttempted bool
 	FetchErr       string
+
+	UpstreamFetchAttempted bool
+	UpstreamFetchErr       string
 }
 
 // DiagnoseRepo собирает состояние репозитория по пути, используя те же
@@ -83,11 +86,15 @@ func (c *Client) DiagnoseRepo(ctx context.Context, repoPath string, probeFetch b
 
 	if probeFetch && diag.IsGit {
 		hasOrigin := false
+		hasUpstream := false
 		if remotes, err := c.runGit(ctx, repoPath, "remote"); err == nil {
 			for _, r := range strings.Split(remotes, "\n") {
-				if strings.TrimSpace(r) == "origin" {
+				trimmed := strings.TrimSpace(r)
+				if trimmed == "origin" {
 					hasOrigin = true
-					break
+				}
+				if trimmed == "upstream" {
+					hasUpstream = true
 				}
 			}
 		}
@@ -95,6 +102,12 @@ func (c *Client) DiagnoseRepo(ctx context.Context, repoPath string, probeFetch b
 			diag.FetchAttempted = true
 			if err := c.fetchPrune(ctx, repoPath); err != nil {
 				diag.FetchErr = err.Error()
+			}
+		}
+		if hasUpstream {
+			diag.UpstreamFetchAttempted = true
+			if err := c.fetchPruneRemote(ctx, repoPath, "upstream"); err != nil {
+				diag.UpstreamFetchErr = err.Error()
 			}
 		}
 	}
@@ -126,7 +139,7 @@ func (d RepoDiagnostics) VerdictText() string {
 		return "клон-обрывок: remote-ссылки есть, но HEAD указывает на ветку без единого коммита (сбой первичного clone/fetch) — повторите синхронизацию или пересоздайте клон"
 	case !d.HEADValid:
 		return "HEAD невалиден и remote-ссылок нет — пустой git-каталог (git init без коммитов); повторите синхронизацию или пересоздайте клон"
-	case d.FetchAttempted && d.FetchErr != "":
+	case (d.FetchAttempted && d.FetchErr != "") || (d.UpstreamFetchAttempted && d.UpstreamFetchErr != ""):
 		return "репозиторий читается локально, но синхронизация remote не удалась (см. ошибку пробы выше)"
 	case d.Upstream == "":
 		return "репозиторий загрузится; у текущей ветки не настроен upstream"

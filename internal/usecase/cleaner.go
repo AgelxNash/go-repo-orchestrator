@@ -23,6 +23,8 @@ type gitClient interface {
 	UpdateOpensourceRepo(ctx context.Context, url, targetPath, branch string) error
 	ForceCheckout(ctx context.Context, repoPath, branch string) error
 	CreateTrackingBranchAndCheckout(ctx context.Context, repoPath, localBranch, remoteBranch string) error
+	EnsureRemote(ctx context.Context, repoPath, remoteName, remoteURL string) error
+	FetchRemote(ctx context.Context, repoPath, remoteName string) error
 }
 
 // Cleaner координирует загрузку веток и генерацию скрипта удаления.

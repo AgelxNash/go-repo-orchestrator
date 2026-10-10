@@ -1036,3 +1036,81 @@ func TestResolveRepoPathFallsBackToCWDWithoutConfig(t *testing.T) {
 		t.Fatalf("expected CWD-resolved %q, got %q", want, got)
 	}
 }
+
+func TestLoadValidatesUpstream(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		yaml         string
+		wantErr      bool
+		errSubstr    string
+		wantUpstream string
+	}{
+		{
+			name:         "valid https upstream",
+			yaml:         "repos:\n  - name: test\n    url: https://example.com/fork.git\n    upstream: https://example.com/upstream.git\n",
+			wantUpstream: "https://example.com/upstream.git",
+		},
+		{
+			name:         "valid scp-like upstream",
+			yaml:         "repos:\n  - name: test\n    url: git@example.com:fork.git\n    upstream: git@example.com:upstream.git\n",
+			wantUpstream: "git@example.com:upstream.git",
+		},
+		{
+			name:         "empty upstream is allowed",
+			yaml:         "repos:\n  - name: test\n    url: https://example.com/fork.git\n    upstream: '   '\n",
+			wantUpstream: "",
+		},
+		{
+			name:         "omitted upstream is allowed",
+			yaml:         "repos:\n  - name: test\n    url: https://example.com/fork.git\n",
+			wantUpstream: "",
+		},
+		{
+			name:      "invalid upstream url scheme",
+			yaml:      "repos:\n  - name: test\n    url: https://example.com/fork.git\n    upstream: ftp://example.com/upstream.git\n",
+			wantErr:   true,
+			errSubstr: "repo[test]: некорректный upstream",
+		},
+		{
+			name:      "invalid upstream with whitespace",
+			yaml:      "repos:\n  - name: test\n    url: https://example.com/fork.git\n    upstream: 'https://example.com/up stream.git'\n",
+			wantErr:   true,
+			errSubstr: "repo[test]: некорректный upstream",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := Load(configPath)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errSubstr)
+				}
+				if !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Fatalf("expected error containing %q, got: %v", tt.errSubstr, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cfg.Repos) != 1 {
+				t.Fatalf("expected 1 repo, got %d", len(cfg.Repos))
+			}
+			if got := cfg.Repos[0].Upstream; got != tt.wantUpstream {
+				t.Fatalf("expected Upstream %q, got %q", tt.wantUpstream, got)
+			}
+		})
+	}
+}

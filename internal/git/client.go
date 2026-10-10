@@ -434,7 +434,7 @@ func (c *Client) listRemoteBranches(repo *git.Repository) ([]model.BranchInfo, e
 			return nil
 		}
 
-		if ref.Name().Short() == "origin/HEAD" || strings.HasSuffix(ref.Name().String(), "/HEAD") {
+		if strings.HasSuffix(ref.Name().Short(), "/HEAD") || strings.HasSuffix(ref.Name().String(), "/HEAD") {
 			return nil
 		}
 
@@ -632,33 +632,86 @@ func rejectExistingClonePath(managedPath, repoURL string) error {
 	return nil
 }
 
-// ensureOriginURL записывает URL origin, если текущий адрес отличается.
-func (c *Client) ensureOriginURL(ctx context.Context, repoPath, repoURL string) error {
-	stdout, err := c.runGit(ctx, repoPath, "remote", "get-url", "origin")
-	if err != nil {
-		return fmt.Errorf("чтение адреса origin: %w", err)
+// EnsureRemote проверяет наличие указанного remote и его адрес;
+// если remote отсутствует, добавляет его через git remote add;
+// если адрес отличается, обновляет через git remote set-url.
+func (c *Client) EnsureRemote(ctx context.Context, repoPath, remoteName, remoteURL string) error {
+	remoteName = strings.TrimSpace(remoteName)
+	remoteURL = strings.TrimSpace(remoteURL)
+	if remoteName == "" || remoteURL == "" {
+		return errors.New("требуется имя и адрес remote")
 	}
 
-	currentURL := strings.TrimSpace(stdout)
-	if currentURL == repoURL {
+	stdout, err := c.runGit(ctx, repoPath, "remote", "get-url", remoteName)
+	if err == nil {
+		currentURL := strings.TrimSpace(stdout)
+		if currentURL == remoteURL {
+			return nil
+		}
+		if _, err := c.runGit(ctx, repoPath, "remote", "set-url", remoteName, remoteURL); err != nil {
+			return fmt.Errorf("установка адреса remote %q: %w", remoteName, err)
+		}
 		return nil
 	}
 
-	if _, err := c.runGit(ctx, repoPath, "remote", "set-url", "origin", repoURL); err != nil {
-		return fmt.Errorf("установка адреса origin: %w", err)
+	if errCtx := ctx.Err(); errCtx != nil {
+		return err
+	}
+
+	remotesOut, listErr := c.runGit(ctx, repoPath, "remote")
+	if listErr != nil {
+		return fmt.Errorf("чтение списка remotes: %w", listErr)
+	}
+
+	hasRemote := false
+	for _, r := range strings.Split(remotesOut, "\n") {
+		if strings.TrimSpace(r) == remoteName {
+			hasRemote = true
+			break
+		}
+	}
+
+	if hasRemote {
+		if _, err := c.runGit(ctx, repoPath, "remote", "set-url", remoteName, remoteURL); err != nil {
+			return fmt.Errorf("установка адреса remote %q: %w", remoteName, err)
+		}
+		return nil
+	}
+
+	if _, err := c.runGit(ctx, repoPath, "remote", "add", remoteName, remoteURL); err != nil {
+		return fmt.Errorf("добавление remote %q: %w", remoteName, err)
 	}
 
 	return nil
 }
 
-// fetchPrune выполняет git fetch --prune origin с семафором и retry для transient-сбоев.
-func (c *Client) fetchPrune(ctx context.Context, repoPath string) error {
+// ensureOriginURL записывает URL origin, если текущий адрес отличается.
+func (c *Client) ensureOriginURL(ctx context.Context, repoPath, repoURL string) error {
+	return c.EnsureRemote(ctx, repoPath, "origin", repoURL)
+}
+
+// fetchPruneRemote выполняет git fetch --prune для указанного remote с семафором и retry для transient-сбоев.
+func (c *Client) fetchPruneRemote(ctx context.Context, repoPath, remoteName string) error {
+	remoteName = strings.TrimSpace(remoteName)
+	if remoteName == "" {
+		return errors.New("требуется имя remote")
+	}
 	return c.withNetworkRetry(ctx, func(ctx context.Context) error {
-		if _, err := c.runGit(ctx, repoPath, "fetch", "--prune", "origin"); err != nil {
-			return fmt.Errorf("ошибка fetch --prune origin: %w", err)
+		if _, err := c.runGit(ctx, repoPath, "fetch", "--prune", remoteName); err != nil {
+			return fmt.Errorf("ошибка fetch --prune %s: %w", remoteName, err)
 		}
 		return nil
 	})
+}
+
+// fetchPrune выполняет git fetch --prune origin с семафором и retry для transient-сбоев.
+func (c *Client) fetchPrune(ctx context.Context, repoPath string) error {
+	return c.fetchPruneRemote(ctx, repoPath, "origin")
+}
+
+// FetchRemote выполняет git fetch --prune для указанного remote с семафором и network retry.
+func (c *Client) FetchRemote(ctx context.Context, repoPath, remoteName string) error {
+	return c.fetchPruneRemote(ctx, repoPath, remoteName)
 }
 
 func (c *Client) seedLocalBranchesFromOrigin(ctx context.Context, repoPath string) error {

@@ -579,6 +579,162 @@ func TestLockForPathWaitCanBeCanceledByContext(t *testing.T) {
 	}
 }
 
+func TestEnsureRemote(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "repo")
+	runCmd(t, dir, "git", "init", repoPath)
+	runCmd(t, repoPath, "git", "config", "user.email", "test@example.com")
+	runCmd(t, repoPath, "git", "config", "user.name", "tester")
+
+	client := NewClient(5*time.Second, filepath.Join(dir, "workspace"))
+
+	// Пустые параметры
+	if err := client.EnsureRemote(t.Context(), repoPath, "", "https://example.com/a.git"); err == nil {
+		t.Fatal("expected error for empty remoteName")
+	}
+	if err := client.EnsureRemote(t.Context(), repoPath, "upstream", ""); err == nil {
+		t.Fatal("expected error for empty remoteURL")
+	}
+
+	// 1. Добавление нового remote
+	initialURL := "https://example.com/upstream-original.git"
+	if err := client.EnsureRemote(t.Context(), repoPath, "upstream", initialURL); err != nil {
+		t.Fatalf("expected successful remote add, got: %v", err)
+	}
+
+	cmd := exec.Command("git", "remote", "get-url", "upstream")
+	cmd.Dir = repoPath
+	cmd.Env = testenv.GitSanitizedEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git remote get-url upstream failed: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != initialURL {
+		t.Fatalf("expected remote url %q, got %q", initialURL, got)
+	}
+
+	// 2. Повторный вызов с совпадающим URL (no-op)
+	if err := client.EnsureRemote(t.Context(), repoPath, "upstream", initialURL); err != nil {
+		t.Fatalf("expected no-op for same URL, got error: %v", err)
+	}
+
+	// 3. Обновление существующего remote при смене URL
+	updatedURL := "https://example.com/upstream-changed.git"
+	if err := client.EnsureRemote(t.Context(), repoPath, "upstream", updatedURL); err != nil {
+		t.Fatalf("expected successful remote update, got: %v", err)
+	}
+
+	cmd = exec.Command("git", "remote", "get-url", "upstream")
+	cmd.Dir = repoPath
+	cmd.Env = testenv.GitSanitizedEnv()
+	out, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("git remote get-url upstream failed: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != updatedURL {
+		t.Fatalf("expected updated remote url %q, got %q", updatedURL, got)
+	}
+}
+
+func TestFetchRemoteAndMultiRemote(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required")
+	}
+
+	dir := t.TempDir()
+	originBare := filepath.Join(dir, "origin.git")
+	upstreamBare := filepath.Join(dir, "upstream.git")
+	seedOrigin := filepath.Join(dir, "seed-origin")
+	seedUpstream := filepath.Join(dir, "seed-upstream")
+	repoPath := filepath.Join(dir, "repo")
+
+	runCmd(t, dir, "git", "init", "--bare", originBare)
+	runCmd(t, dir, "git", "init", "--bare", upstreamBare)
+
+	// Наполняем origin
+	runCmd(t, dir, "git", "clone", originBare, seedOrigin)
+	runCmd(t, seedOrigin, "git", "config", "user.email", "origin@example.com")
+	runCmd(t, seedOrigin, "git", "config", "user.name", "origin-user")
+	runCmd(t, seedOrigin, "git", "checkout", "-b", "main")
+	writeFile(t, filepath.Join(seedOrigin, "origin.txt"), "origin\n")
+	runCmd(t, seedOrigin, "git", "add", "origin.txt")
+	runCmd(t, seedOrigin, "git", "commit", "-m", "origin main")
+	runCmd(t, seedOrigin, "git", "push", "-u", "origin", "main")
+	runCmd(t, seedOrigin, "git", "checkout", "-b", "origin-feature")
+	runCmd(t, seedOrigin, "git", "push", "-u", "origin", "origin-feature")
+	runCmd(t, dir, "git", "--git-dir", originBare, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	// Наполняем upstream
+	runCmd(t, dir, "git", "clone", upstreamBare, seedUpstream)
+	runCmd(t, seedUpstream, "git", "config", "user.email", "upstream@example.com")
+	runCmd(t, seedUpstream, "git", "config", "user.name", "upstream-user")
+	runCmd(t, seedUpstream, "git", "checkout", "-b", "upstream-main")
+	writeFile(t, filepath.Join(seedUpstream, "upstream.txt"), "upstream\n")
+	runCmd(t, seedUpstream, "git", "add", "upstream.txt")
+	runCmd(t, seedUpstream, "git", "commit", "-m", "upstream main")
+	runCmd(t, seedUpstream, "git", "push", "-u", "origin", "upstream-main")
+	runCmd(t, seedUpstream, "git", "checkout", "-b", "upstream-feature")
+	runCmd(t, seedUpstream, "git", "push", "-u", "origin", "upstream-feature")
+	runCmd(t, dir, "git", "--git-dir", upstreamBare, "symbolic-ref", "HEAD", "refs/heads/upstream-main")
+
+	// Клонируем origin в repoPath
+	runCmd(t, dir, "git", "clone", originBare, repoPath)
+
+	client := NewClient(5*time.Second, filepath.Join(dir, "workspace"))
+
+	// Настраиваем upstream remote и делаем FetchRemote
+	if err := client.EnsureRemote(t.Context(), repoPath, "upstream", upstreamBare); err != nil {
+		t.Fatalf("ensure upstream remote: %v", err)
+	}
+
+	if err := client.FetchRemote(t.Context(), repoPath, "upstream"); err != nil {
+		t.Fatalf("fetch upstream remote: %v", err)
+	}
+
+	// Получаем список веток
+	branches, err := client.ListBranches(t.Context(), repoPath)
+	if err != nil {
+		t.Fatalf("list branches: %v", err)
+	}
+
+	var foundOriginFeature, foundUpstreamFeature, foundHead bool
+	for _, b := range branches {
+		if strings.HasSuffix(b.QualifiedName, "/HEAD") || b.Name == "HEAD" {
+			foundHead = true
+		}
+		if b.Scope == model.BranchScopeRemote && b.RemoteName == "origin" && b.Name == "origin-feature" {
+			foundOriginFeature = true
+			if b.QualifiedName != "origin/origin-feature" {
+				t.Fatalf("unexpected QualifiedName: %s", b.QualifiedName)
+			}
+		}
+		if b.Scope == model.BranchScopeRemote && b.RemoteName == "upstream" && b.Name == "upstream-feature" {
+			foundUpstreamFeature = true
+			if b.QualifiedName != "upstream/upstream-feature" {
+				t.Fatalf("unexpected QualifiedName: %s", b.QualifiedName)
+			}
+		}
+	}
+
+	if !foundOriginFeature {
+		t.Fatalf("expected to find origin/origin-feature branch, branches: %+v", branches)
+	}
+	if !foundUpstreamFeature {
+		t.Fatalf("expected to find upstream/upstream-feature branch, branches: %+v", branches)
+	}
+	if foundHead {
+		t.Fatalf("remote HEAD should be ignored, found: %+v", branches)
+	}
+}
+
 // runCmd выполняет команду в workdir с очищенным от GIT_* окружением
 // (см. testenv.GitSanitizedEnv) и падает с выводом при ошибке.
 func runCmd(t *testing.T, workdir string, command string, args ...string) {

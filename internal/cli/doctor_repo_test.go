@@ -146,6 +146,51 @@ func TestDoctorRepoMasksURLCredentials(t *testing.T) {
 	}
 }
 
+func TestDoctorRepoWithUpstreamRemote(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "cfg")
+	repoDir := filepath.Join(root, "fork-repo")
+	originBare := filepath.Join(root, "origin.git")
+	upstreamBare := filepath.Join(root, "upstream.git")
+	for _, dir := range []string{configDir, repoDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runShell(t, root, "git init -q --bare origin.git")
+	runShell(t, root, "git init -q --bare upstream.git")
+
+	runShell(t, repoDir, "git init -q -b main .")
+	runShell(t, repoDir, "git config user.email test@example.com")
+	runShell(t, repoDir, "git config user.name tester")
+	runShell(t, repoDir, "git commit -q --allow-empty -m init")
+	runShell(t, repoDir, "git remote add origin "+originBare)
+	runShell(t, repoDir, "git push -q -u origin main")
+	runShell(t, repoDir, "git remote add upstream "+upstreamBare)
+	runShell(t, repoDir, "git push -q -u upstream main")
+
+	configPath := writeDoctorRepoConfig(t, configDir,
+		"repos:\n  - name: group/fork\n    url: git@example.com:group/fork.git\n    upstream: git@example.com:group/upstream.git\n    path: ../fork-repo\n")
+
+	rendered, err := runDoctorRepo(t, configPath, "group/fork")
+	if err != nil {
+		t.Fatalf("doctor repo: %v", err)
+	}
+
+	for _, fragment := range []string{
+		"Репозиторий-диагностика: group/fork",
+		"URL: git@example.com:group/fork.git",
+		"Upstream URL: git@example.com:group/upstream.git",
+		"fetch --prune origin: ok",
+		"fetch --prune upstream: ok",
+		"Вердикт: репозиторий загрузится",
+	} {
+		if !strings.Contains(rendered, fragment) {
+			t.Fatalf("expected output to contain %q, got:\n%s", fragment, rendered)
+		}
+	}
+}
+
 func runShell(t *testing.T, dir, command string) {
 	t.Helper()
 	cmd := exec.Command("sh", "-c", command)

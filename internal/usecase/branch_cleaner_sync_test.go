@@ -27,6 +27,8 @@ type fakeGitClient struct {
 	getRepoStatFn         func(ctx context.Context, repoPath string) (model.RepoStat, error)
 	updateOpensourceFn    func(ctx context.Context, url, targetPath, branch string) error
 	createTrackingFn      func(ctx context.Context, repoPath, localBranch, remoteBranch string) error
+	ensureRemoteFn        func(ctx context.Context, repoPath, remoteName, remoteURL string) error
+	fetchRemoteFn         func(ctx context.Context, repoPath, remoteName string) error
 }
 
 type fakeStatusResolver struct {
@@ -145,6 +147,20 @@ func (f *fakeGitClient) ForceCheckout(_ context.Context, repoPath, branch string
 func (f *fakeGitClient) CreateTrackingBranchAndCheckout(ctx context.Context, repoPath, localBranch, remoteBranch string) error {
 	if f.createTrackingFn != nil {
 		return f.createTrackingFn(ctx, repoPath, localBranch, remoteBranch)
+	}
+	return nil
+}
+
+func (f *fakeGitClient) EnsureRemote(ctx context.Context, repoPath, remoteName, remoteURL string) error {
+	if f.ensureRemoteFn != nil {
+		return f.ensureRemoteFn(ctx, repoPath, remoteName, remoteURL)
+	}
+	return nil
+}
+
+func (f *fakeGitClient) FetchRemote(ctx context.Context, repoPath, remoteName string) error {
+	if f.fetchRemoteFn != nil {
+		return f.fetchRemoteFn(ctx, repoPath, remoteName)
 	}
 	return nil
 }
@@ -1462,5 +1478,208 @@ func TestLoadRepoBranchesAutocheckIsNoOpWhenEmpty(t *testing.T) {
 
 	if rb.Branches[0].Autocheck {
 		t.Fatal("branch must not be autocheck-selected when autocheck is empty")
+	}
+}
+
+func TestResolveRepoForReadEnsuresUpstreamRemote(t *testing.T) {
+	t.Parallel()
+
+	ensureRemoteCalled := false
+	var capturedPath, capturedName, capturedURL string
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/demo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			ensureRemoteCalled = true
+			capturedPath = repoPath
+			capturedName = remoteName
+			capturedURL = remoteURL
+			return nil
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "demo",
+		Path:     "/tmp/demo",
+		Upstream: "git@example.com:upstream/demo.git",
+	}
+
+	path, warning, err := cleaner.resolveRepoForRead(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "/tmp/demo" {
+		t.Fatalf("unexpected path: %q", path)
+	}
+	if warning.Code != "" {
+		t.Fatalf("unexpected warning: %+v", warning)
+	}
+	if !ensureRemoteCalled {
+		t.Fatal("expected EnsureRemote to be called")
+	}
+	if capturedPath != "/tmp/demo" || capturedName != "upstream" || capturedURL != "git@example.com:upstream/demo.git" {
+		t.Fatalf("unexpected EnsureRemote arguments: path=%q, name=%q, url=%q", capturedPath, capturedName, capturedURL)
+	}
+}
+
+func TestFetchAndPullRepoWithUpstreamSuccess(t *testing.T) {
+	t.Parallel()
+
+	ensureRemoteCalled := false
+	fetchRemoteCalled := false
+	fetchAndPullCalled := false
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/demo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			ensureRemoteCalled = true
+			if repoPath != "/tmp/demo" || remoteName != "upstream" || remoteURL != "git@example.com:upstream/demo.git" {
+				t.Fatalf("unexpected ensureRemote call: %s %s %s", repoPath, remoteName, remoteURL)
+			}
+			return nil
+		},
+		fetchRemoteFn: func(_ context.Context, repoPath, remoteName string) error {
+			fetchRemoteCalled = true
+			if repoPath != "/tmp/demo" || remoteName != "upstream" {
+				t.Fatalf("unexpected fetchRemote call: %s %s", repoPath, remoteName)
+			}
+			return nil
+		},
+		fetchAndPullFn: func(_ context.Context, repoPath, repoURL string) error {
+			fetchAndPullCalled = true
+			return nil
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "demo",
+		Path:     "/tmp/demo",
+		Upstream: "git@example.com:upstream/demo.git",
+	}
+
+	err := cleaner.FetchAndPullRepo(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ensureRemoteCalled {
+		t.Fatal("expected EnsureRemote call")
+	}
+	if !fetchRemoteCalled {
+		t.Fatal("expected FetchRemote call")
+	}
+	if !fetchAndPullCalled {
+		t.Fatal("expected FetchAndPull call")
+	}
+}
+
+func TestFetchAndPullRepoWithUpstreamFetchError(t *testing.T) {
+	t.Parallel()
+
+	fetchRemoteErr := errors.New("network timeout upstream")
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/demo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			return nil
+		},
+		fetchRemoteFn: func(_ context.Context, repoPath, remoteName string) error {
+			return fetchRemoteErr
+		},
+		fetchAndPullFn: func(_ context.Context, repoPath, repoURL string) error {
+			return nil
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "demo",
+		Path:     "/tmp/demo",
+		Upstream: "git@example.com:upstream/demo.git",
+	}
+
+	err := cleaner.FetchAndPullRepo(t.Context(), repo)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "fetch remote upstream") || !strings.Contains(err.Error(), "network timeout upstream") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestFetchAndPullRepoWithUpstreamBothErrorsJoined(t *testing.T) {
+	t.Parallel()
+
+	fetchRemoteErr := errors.New("upstream failed")
+	pullErr := errors.New("origin pull failed")
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/demo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			return nil
+		},
+		fetchRemoteFn: func(_ context.Context, repoPath, remoteName string) error {
+			return fetchRemoteErr
+		},
+		fetchAndPullFn: func(_ context.Context, repoPath, repoURL string) error {
+			return pullErr
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "demo",
+		Path:     "/tmp/demo",
+		Upstream: "git@example.com:upstream/demo.git",
+	}
+
+	err := cleaner.FetchAndPullRepo(t.Context(), repo)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "fetch remote upstream") {
+		t.Fatalf("expected upstream error in joined error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "выполнить fetch и pull") {
+		t.Fatalf("expected pull error in joined error, got: %v", err)
+	}
+}
+
+func TestFetchAndPullRepoWithUpstreamEnsureRemoteError(t *testing.T) {
+	t.Parallel()
+
+	ensureErr := errors.New("permission denied")
+
+	git := &fakeGitClient{
+		resolveRepoPathFn: func(_ context.Context, repoName, repoURL, localPath string) (string, error) {
+			return "/tmp/demo", nil
+		},
+		ensureRemoteFn: func(_ context.Context, repoPath, remoteName, remoteURL string) error {
+			return ensureErr
+		},
+	}
+
+	cleaner := NewCleaner(git)
+	repo := config.RepoConfig{
+		Name:     "demo",
+		Path:     "/tmp/demo",
+		Upstream: "git@example.com:upstream/demo.git",
+	}
+
+	err := cleaner.FetchAndPullRepo(t.Context(), repo)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "настроить remote upstream") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -342,6 +342,9 @@ func renderRepoDiagnostics(out io.Writer, repo config.RepoConfig, configDir stri
 	if repo.URL != "" {
 		writef(out, "URL: %s\n", sanitizeRepoURL(repo.URL))
 	}
+	if repo.Upstream != "" {
+		writef(out, "Upstream URL: %s\n", sanitizeRepoURL(repo.Upstream))
+	}
 	writef(out, "Путь (резолв): %s\n", diag.Path)
 	if configDir != "" {
 		if rel, err := filepath.Rel(configDir, diag.Path); err == nil {
@@ -393,7 +396,15 @@ func renderRepoDiagnostics(out io.Writer, repo config.RepoConfig, configDir stri
 		} else {
 			writef(out, "fetch --prune origin: ОШИБКА:\n%s\n", diag.FetchErr)
 		}
-	} else {
+	}
+	if diag.UpstreamFetchAttempted {
+		if diag.UpstreamFetchErr == "" {
+			writef(out, "fetch --prune upstream: ok\n")
+		} else {
+			writef(out, "fetch --prune upstream: ОШИБКА:\n%s\n", diag.UpstreamFetchErr)
+		}
+	}
+	if !diag.FetchAttempted && !diag.UpstreamFetchAttempted {
 		writef(out, "не выполнялась (нет git-репозитория по пути)\n")
 	}
 
