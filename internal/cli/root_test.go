@@ -23,6 +23,10 @@ func TestRootCommandFailsFastWithoutConfigFlag(t *testing.T) {
 			name: "generate command",
 			args: []string{"generate"},
 		},
+		{
+			name: "status command",
+			args: []string{"status"},
+		},
 	}
 
 	for _, tt := range tests {

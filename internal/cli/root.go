@@ -111,6 +111,8 @@ func NewRootCommand(version, commit, date string, logger *zap.Logger) *cobra.Com
 
 	cmd.AddCommand(newGenerateCommand(v, logger))
 	cmd.AddCommand(newDoctorCommand(v, logger))
+	cmd.AddCommand(newStatusCommand(v, logger))
+	cmd.AddCommand(newExecCommand(v, logger))
 
 	return cmd
 }
