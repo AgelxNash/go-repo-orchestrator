@@ -55,6 +55,11 @@
           "minLength": 1,
           "description": "Git URL: https://, ssh:// или SCP-like git@host:path.git."
         },
+        "upstream": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git URL upstream-репозитория (для форков): https://, ssh:// или SCP-like git@host:path.git."
+        },
         "path": {
           "type": "string",
           "minLength": 1,

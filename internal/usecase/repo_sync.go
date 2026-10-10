@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/agelxnash/go-repo-orchestrator/internal/config"
@@ -41,20 +42,26 @@ func newRemoteSyncWarning(err error) model.RepoWarning {
 }
 
 func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig) (string, model.RepoWarning, error) {
+	var (
+		managedPath string
+		warning     model.RepoWarning
+		err         error
+	)
+
 	switch repo.SourceType() {
 	case "url":
-		managedPath, err := c.git.EnsureManagedClone(ctx, repo.Name, repo.URL)
-		if err == nil {
-			return managedPath, model.RepoWarning{}, nil
-		}
+		var cloneErr error
+		managedPath, cloneErr = c.git.EnsureManagedClone(ctx, repo.Name, repo.URL)
+		if cloneErr != nil {
+			fallbackPath := c.git.ManagedRepoPath(repo.Name, repo.URL)
+			fallbackCtx := context.WithoutCancel(ctx)
+			if _, fallbackErr := c.git.ResolveRepoPath(fallbackCtx, repo.Name, "", fallbackPath); fallbackErr != nil {
+				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", cloneErr)
+			}
 
-		fallbackPath := c.git.ManagedRepoPath(repo.Name, repo.URL)
-		fallbackCtx := context.WithoutCancel(ctx)
-		if _, fallbackErr := c.git.ResolveRepoPath(fallbackCtx, repo.Name, "", fallbackPath); fallbackErr != nil {
-			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
+			managedPath = fallbackPath
+			warning = newRemoteSyncWarning(cloneErr)
 		}
-
-		return fallbackPath, newRemoteSyncWarning(err), nil
 
 	case "opensource":
 		if updateErr := c.git.UpdateOpensourceRepo(ctx, repo.URL, repo.Path, repo.Branch.Autoswitch); updateErr != nil {
@@ -63,24 +70,27 @@ func (c *Cleaner) resolveRepoForRead(ctx context.Context, repo config.RepoConfig
 				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", updateErr)
 			}
 
-			return localPath, newRemoteSyncWarning(updateErr), nil
+			managedPath = localPath
+			warning = newRemoteSyncWarning(updateErr)
+		} else {
+			managedPath, err = c.git.ResolveRepoPath(ctx, repo.Name, "", repo.Path)
+			if err != nil {
+				return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
+			}
 		}
-
-		localPath, err := c.git.ResolveRepoPath(ctx, repo.Name, "", repo.Path)
-		if err != nil {
-			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
-		}
-
-		return localPath, model.RepoWarning{}, nil
 
 	default:
-		managedPath, err := c.git.ResolveRepoPath(ctx, repo.Name, repo.URL, repo.Path)
+		managedPath, err = c.git.ResolveRepoPath(ctx, repo.Name, repo.URL, repo.Path)
 		if err != nil {
 			return "", model.RepoWarning{}, fmt.Errorf("подготовить репозиторий: %w", err)
 		}
-
-		return managedPath, model.RepoWarning{}, nil
 	}
+
+	if repo.Upstream != "" && managedPath != "" {
+		_ = c.git.EnsureRemote(ctx, managedPath, "upstream", repo.Upstream)
+	}
+
+	return managedPath, warning, nil
 }
 
 // ForceCheckoutLocalBranch проксирует вызов к git для принудительного переключения ветки
@@ -123,8 +133,23 @@ func (c *Cleaner) FetchAndPullRepo(ctx context.Context, repo config.RepoConfig) 
 		}
 	}
 
-	if err := c.git.FetchAndPull(ctx, repoPath, repo.URL); err != nil {
-		return fmt.Errorf("выполнить fetch и pull: %w", err)
+	var upstreamErr error
+	if repo.Upstream != "" {
+		if err := c.git.EnsureRemote(ctx, repoPath, "upstream", repo.Upstream); err != nil {
+			return fmt.Errorf("настроить remote upstream: %w", err)
+		}
+		if err := c.git.FetchRemote(ctx, repoPath, "upstream"); err != nil {
+			upstreamErr = fmt.Errorf("fetch remote upstream: %w", err)
+		}
+	}
+
+	pullErr := c.git.FetchAndPull(ctx, repoPath, repo.URL)
+	if pullErr != nil {
+		pullErr = fmt.Errorf("выполнить fetch и pull: %w", pullErr)
+	}
+
+	if upstreamErr != nil || pullErr != nil {
+		return errors.Join(upstreamErr, pullErr)
 	}
 
 	return nil

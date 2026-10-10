@@ -186,3 +186,41 @@ type ScriptResult struct {
 	Format        ScriptFormat
 	BranchesCount int
 }
+
+// StatusReport содержит сводный отчет о состоянии репозиториев для команды status.
+type StatusReport struct {
+	Total  int             `json:"total"`
+	Clean  int             `json:"clean"`
+	Dirty  int             `json:"dirty"`
+	Errors int             `json:"errors"`
+	Repos  []RepoStatusDTO `json:"repos"`
+}
+
+// RepoStatusDTO описывает состояние отдельного репозитория в отчете команды status.
+type RepoStatusDTO struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Branch      string `json:"branch"`
+	Dirty       bool   `json:"dirty"`
+	SyncWarning string `json:"sync_warning,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// ExecReport содержит сводный отчет пакетного выполнения команд.
+type ExecReport struct {
+	Total   int             `json:"total"`
+	Success int             `json:"success"`
+	Failed  int             `json:"failed"`
+	Results []ExecResultDTO `json:"results"`
+}
+
+// ExecResultDTO описывает результат выполнения команды в одном репозитории.
+type ExecResultDTO struct {
+	Repo       string `json:"repo"`
+	Path       string `json:"path"`
+	ExitCode   int    `json:"exit_code"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+	DurationMS int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+}

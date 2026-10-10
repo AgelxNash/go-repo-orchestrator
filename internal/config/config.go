@@ -35,10 +35,11 @@ type BrowserConfig struct {
 
 // RepoConfig описывает правила обработки веток для одного репозитория.
 type RepoConfig struct {
-	Name   string `yaml:"name" mapstructure:"name"`
-	URL    string `yaml:"url" mapstructure:"url"`
-	Path   string `yaml:"path" mapstructure:"path"`
-	Branch Branch `yaml:"branch" mapstructure:"branch"`
+	Name     string `yaml:"name" mapstructure:"name"`
+	URL      string `yaml:"url" mapstructure:"url"`
+	Upstream string `yaml:"upstream,omitempty" mapstructure:"upstream"`
+	Path     string `yaml:"path" mapstructure:"path"`
+	Branch   Branch `yaml:"branch" mapstructure:"branch"`
 
 	keep      []*compiledPattern
 	jira      []*compiledPattern
@@ -277,6 +278,12 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 
 		repo.URL = strings.TrimSpace(repo.URL)
 		repo.Path = strings.TrimSpace(repo.Path)
+		repo.Upstream = strings.TrimSpace(repo.Upstream)
+		if repo.Upstream != "" {
+			if err := validateRepoURL(repo.Upstream); err != nil {
+				return nil, fmt.Errorf("repo[%s]: некорректный upstream: %w", repo.Name, err)
+			}
+		}
 
 		hasURL := repo.URL != ""
 		hasPath := repo.Path != ""
